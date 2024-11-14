@@ -12,6 +12,7 @@ import time
 import math
 import sys
 import os
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 sys.path.append(os.path.join("/home/rm/lsa/radar/hnurm_radar/src/hnurm_radar/"))
 from ultralytics import YOLO
 class Detector(Node):
@@ -59,13 +60,17 @@ class Detector(Node):
         
         # 设置计数器
         self.loop_times = 0
-        
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10
+        )
         # 定期发送检测结果
         self.publisher_ = self.create_publisher(Robots, 'detect_result', 10)
         timer_period = 0.03  # seconds
         self.timer = self.create_timer(timer_period, self.detect_callback)
         
-        self.subscription = self.create_subscription(Image,'image',self.image_callback,10)
+        self.subscription = self.create_subscription(Image,'image',self.image_callback,qos_profile)
         
     def detect_callback(self):
         # now = time.time()
@@ -317,12 +322,8 @@ class Detector(Node):
                             msg.track_id = result[2]
                             msg.label = result[3]
                             allRobots.detect_results.append(msg)
-                    # cv2.imshow("Image Window", result_img)
+                    
             self.publisher_.publish(allRobots)
-            
-            
-            # # 在这里处理图像，例如显示图像
-            
             
             
             # cv2.waitKey(1)

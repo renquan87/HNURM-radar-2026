@@ -34,7 +34,7 @@
     # 设置使能采集帧率控制
     bEnableAcqFrameRate: false
     # 曝光时间
-    fExposureTime: 7000.0000   #4000.0
+    fExposureTime: 8000.0000   #4000.0
     # 增益
     fGain: 16.0000
     # 自动增益

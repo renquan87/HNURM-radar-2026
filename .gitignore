@@ -3,3 +3,4 @@ src/hnurm_radar/ultralytics/__pycache__*.pyc
 build/
 log/
 install/
+__pycache__/
