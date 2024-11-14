@@ -21,6 +21,7 @@ setup(
     entry_points={
         'console_scripts': [
             "publish_video = hnurm_radar.publish_video:main",
+            "detector_node = hnurm_radar.detector_node:main",
         ],
     },
 )

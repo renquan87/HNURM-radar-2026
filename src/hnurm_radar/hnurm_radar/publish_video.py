@@ -10,8 +10,8 @@ class VideoPublisher(Node):
         self.declare_parameter('video_file', 'path/to/video.mp4')
         video_file = self.get_parameter('video_file').get_parameter_value().string_value
         self.get_logger().info('video_file: %s' % video_file)
-        self.publisher_ = self.create_publisher(Image, 'camera_raw', 10)
-        self.timer = self.create_timer(0.014, self.timer_callback)
+        self.publisher_ = self.create_publisher(Image, 'image', 10)
+        self.timer = self.create_timer(0.016, self.timer_callback)
         self.cap = cv2.VideoCapture(video_file)
         self.bridge = CvBridge()
         self.get_logger().info('Publishing video from: %s' % video_file)
