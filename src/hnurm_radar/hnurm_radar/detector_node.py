@@ -66,24 +66,10 @@ class Detector(Node):
             depth=10
         )
         # 定期发送检测结果
-        self.publisher_ = self.create_publisher(Robots, 'detect_result', 10)
-        timer_period = 0.03  # seconds
-        self.timer = self.create_timer(timer_period, self.detect_callback)
-        
+        self.publisher_ = self.create_publisher(Robots, 'detect_result', qos_profile)
         self.subscription = self.create_subscription(Image,'image',self.image_callback,qos_profile)
-        
-    def detect_callback(self):
-        # now = time.time()
-        # fps = 1 / (now - self.start_time)
-        # self.start_time = now
-        pass
-        # msg = DetectResult()
-        # msg.xyxy_box = [0.0, 0.0, 1.0, 1.0]
-        # msg.xywh_box = [0.5, 0.5, 1.0, 1.0]
-        # msg.track_id = 1
-        # msg.label = 'R1'
-        # self.publisher_.publish(msg)
-        # self.get_logger().info('Publishing: "%s"' % msg.label)
+        # 用于发布检测图像结果节点
+        self.pub_res = self.create_publisher(Image, 'detect_view', qos_profile)
 
     # 对results的结果进行判空
     def is_results_empty(self, results):
@@ -253,7 +239,7 @@ class Detector(Node):
             else:
                 label = "NULL" 
             # result是预测的类别的字符形式，如果不是NULL, 画上分类结果
-            self.draw_result(frame, box, label, conf)
+            # self.draw_result(frame, box, label, conf)
             # 返回结果,现在是画上了结果的frames
             # 把识别的box，conf和最终的类别组合后返回
             # tracker_results.append((box, label, conf)) # 返回的是一个列表，每个元素是一个元组，包含了box, 分类结果和置信度
@@ -322,8 +308,11 @@ class Detector(Node):
                             msg.track_id = result[2]
                             msg.label = result[3]
                             allRobots.detect_results.append(msg)
-                    
+            
             self.publisher_.publish(allRobots)
+            # 将result_img 缩放为 800*600
+            result_img = cv2.resize(result_img, (800, 600))
+            self.pub_res.publish(self.bridge.cv2_to_imgmsg(result_img, "bgr8"))
             
             
             # cv2.waitKey(1)

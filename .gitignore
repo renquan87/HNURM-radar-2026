@@ -1,6 +1,7 @@
-src/hnurm_radar/hnurm_radar/__pycache__/*.pyc
-src/hnurm_radar/ultralytics/__pycache__*.pyc
 build/
 log/
 install/
 __pycache__/
+*.engine
+*.onnx
+
