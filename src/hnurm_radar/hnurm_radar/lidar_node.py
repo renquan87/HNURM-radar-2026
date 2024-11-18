@@ -102,7 +102,7 @@ class LidarListener(Node):
             delta_time = cur_time - last_time
             last_time = cur_time
             time.sleep(0.01)
-            self.get_logger().info("Publishing point cloud, frequency: {:.2f} Hz".format(1 / delta_time))
+            # self.get_logger().info("Publishing point cloud, frequency: {:.2f} Hz".format(1 / delta_time))
             points = self.get_all_pc()
             if len(points) > 0:
                 header = Header()
@@ -153,7 +153,7 @@ class LidarListener(Node):
 
 
 def main(args=None):
-    main_config_path = "./configs/main_config.yaml"
+    main_config_path = "/home/rm/lsa/radar/hnurm_radar/configs/main_config.yaml"
     main_cfg = YAML().load(open(main_config_path, encoding='Utf-8', mode='r'))
     rclpy.init(args=args)
     lidar = LidarListener(main_cfg)

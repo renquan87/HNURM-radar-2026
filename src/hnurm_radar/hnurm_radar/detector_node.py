@@ -21,7 +21,7 @@ class Detector(Node):
         self.start_time = time.time()
         self.bridge = CvBridge()
         # 加载配置文件
-        self.cfg = YAML().load(open("configs/detector_config.yaml", encoding='Utf-8', mode='r'))
+        self.cfg = YAML().load(open("/home/rm/lsa/radar/hnurm_radar/configs/detector_config.yaml", encoding='Utf-8', mode='r'))
         # flag
         self.is_record = self.cfg['is_record']
         self.record_fps = self.cfg['record_fps']
