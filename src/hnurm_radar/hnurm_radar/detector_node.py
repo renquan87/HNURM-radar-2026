@@ -29,8 +29,11 @@ class Detector(Node):
         # Load models
         self.get_logger().info('Loading Yolo models...')
         self.model_car = YOLO(self.cfg['path']['stage_one_path'] , task = "detect")
+        self.model_car.overrides['imgsz'] = 1280
         self.model_car2 = YOLO(self.cfg['path']['stage_two_path'])
+        # self.model_car2.overrides['imgsz'] = 256
         self.model_car3 = YOLO(self.cfg['path']['stage_three_path'])
+        # self.model_car3.overrides['imgsz']=256
         self.get_logger().info('Yolo models loaded.')
         
         # Set Detector Parameters

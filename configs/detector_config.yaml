@@ -1,5 +1,5 @@
 path:
-  stage_one_path:  "/home/rm/lsa/radar/hnurm_radar/weights/stage_one.pt" # 未测试，不行就改成绝对路径
+  stage_one_path:  "/home/rm/lsa/radar/hnurm_radar/weights/stage_one.engine" # 未测试，不行就改成绝对路径
   stage_two_path: "/home/rm/lsa/radar/hnurm_radar/weights/stage_two.pt" #
   stage_three_path: "/home/rm/lsa/radar/hnurm_radar/weights/stage_three.pt"
   tracker_path: "/home/rm/lsa/radar/hnurm_radar/configs/bytetrack.yaml"

@@ -116,7 +116,6 @@ gast==0.5.2
 genmsg==0.5.16
 genpy==0.6.16
 geometry-msgs==4.2.4
--e git+ssh://git@gitee.com/alanleee/hnurm_radar.git@4bae7077373c85d660add90c0728b09ccc1523d1#egg=hnurm_radar&subdirectory=build/hnurm_radar
 html5lib==1.1
 httplib2==0.20.2
 huggingface-hub==0.26.2

@@ -3,7 +3,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import cv2
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy ,qos_profile_sensor_data
 class VideoPublisher(Node):
     def __init__(self):
         super().__init__('video_publisher')
@@ -13,10 +13,11 @@ class VideoPublisher(Node):
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
-            depth=10
+            depth=3
         )
+        
         self.publisher_ = self.create_publisher(Image, 'image', qos_profile)
-        self.timer = self.create_timer(0.1, self.timer_callback)
+        self.timer = self.create_timer(0.016, self.timer_callback)
         self.cap = cv2.VideoCapture(video_file)
         self.bridge = CvBridge()
         self.get_logger().info('Publishing video from: %s' % video_file)
