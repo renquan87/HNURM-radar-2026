@@ -10,9 +10,11 @@ from cv_bridge import CvBridge
 import cv2
 import time
 import math
+import threading
 import sys
 import os
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from collections import deque
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, qos_profile_sensor_data
 sys.path.append(os.path.join("/home/rm/lsa/radar/hnurm_radar/src/hnurm_radar/"))
 from ultralytics import YOLO
 class Detector(Node):
@@ -31,9 +33,9 @@ class Detector(Node):
         self.model_car = YOLO(self.cfg['path']['stage_one_path'] , task = "detect")
         self.model_car.overrides['imgsz'] = 1280
         self.model_car2 = YOLO(self.cfg['path']['stage_two_path'])
-        # self.model_car2.overrides['imgsz'] = 256
+        self.model_car2.overrides['imgsz'] = 256
         self.model_car3 = YOLO(self.cfg['path']['stage_three_path'])
-        # self.model_car3.overrides['imgsz']=256
+        self.model_car3.overrides['imgsz']=256
         self.get_logger().info('Yolo models loaded.')
         
         # Set Detector Parameters
@@ -70,10 +72,29 @@ class Detector(Node):
         )
         # 定期发送检测结果
         self.publisher_ = self.create_publisher(Robots, 'detect_result', qos_profile)
-        self.subscription = self.create_subscription(Image,'image',self.image_callback,qos_profile)
+        self.subscription = self.create_subscription(Image,'image',self.fetchFrames,qos_profile)
         # 用于发布检测图像结果节点
         self.pub_res = self.create_publisher(Image, 'detect_view', qos_profile)
-
+        
+        # 创建大小为maxFrame的队列
+        self.frame_queue = deque(maxlen=10)
+        self._frame_lock = threading.Lock()
+        # 创建线程用于推理
+        self.threading = threading.Thread(target=self.infer_loop)
+        self.threading.start()
+    def fetchFrames(self, msg):
+        # 将ROS图像消息转换为OpenCV图像
+        cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+        # 加锁防止多线程同时访问
+        with self._frame_lock:
+            self.frame_queue.append(cv_image)
+        
+    def getFrame(self):
+        with self._frame_lock:
+            if self.frame_queue:
+                return self.frame_queue[-1]
+            else:
+                return None
     # 对results的结果进行判空
     def is_results_empty(self, results):
         if results is None:
@@ -96,10 +117,21 @@ class Detector(Node):
         return results
     # 二阶段分类推理Classify
     def classify_infer(self, roi_list): # 输入原图和box, 返回分类结果
-        results = self.model_car2.predict(roi_list, conf = self.stage_two_conf , device = 0 ,verbose = False  )
+        # print((roi_list))
+        # 打印出roi_list的shape
+        # print(len(roi_list))
+        results = []
+        gray_results = []
+        for i in roi_list:
+            results.extend(self.model_car2.predict(i, conf=self.stage_two_conf, device=0, verbose=False))
+            gray_results.extend(self.model_car3.predict(i, device=0, verbose=False))
+            # print(results)
+        # results = self.model_car2.predict(roi_list, conf = self.stage_two_conf , device = 0 ,verbose = False  )
         if len(results) == 0:  # no detect
             return -1
-        gray_results = self.model_car3.predict(roi_list , verbose = False)
+        # for i in roi_list:
+            
+        # gray_results = self.model_car3.predict(roi_list , verbose = False)
         label_list = []
         conf_list = []
         for result,gray_result,roi in zip(results,gray_results,roi_list):
@@ -284,43 +316,50 @@ class Detector(Node):
                           (0, 255, 122), 5)
         return frame
 
-    def image_callback(self, msg):
-        now = time.time()
-        fps = 1 / (now - self.start_time)
-        self.start_time = now
-        # self.get_logger().info('Detector FPS: %s' % fps)
-        try:
-            # 将ROS图像消息转换为OpenCV图像
-            cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-            # print(cv_image)
+    def infer_loop(self):
+        time.sleep(0.5)
+        while rclpy.ok():
+            now = time.time()
+            fps = 1 / (now - self.start_time)
+        
+            self.start_time = now
+            # self.get_logger().info('Detector FPS: %s' % fps)
+            try:
+                # 将ROS图像消息转换为OpenCV图像
+                cv_image = self.getFrame()
+                if cv_image is not None:
+                    cv_image = cv_image.copy()
+                else:
+                    continue
+                # print(cv_image)
             
-            allRobots = Robots()
-            # Inference
-            if cv_image is not None:
-                infer_result = self.infer(cv_image)
+                allRobots = Robots()
+                # Inference
+                if cv_image is not None:
+                    infer_result = self.infer(cv_image)
                 
-                if infer_result is not None:
-                    result_img, results = infer_result
-                    if results is not None:
-                        # xyxy_box, xywh_box ,  track_id , label = result
-                        for result in results:
-                            msg = DetectResult()
-                            msg.xyxy_box = result[0]
-                            # print(result[1])
-                            msg.xywh_box = [float(x) for x in result[1]]
-                            msg.track_id = result[2]
-                            msg.label = result[3]
-                            allRobots.detect_results.append(msg)
+                    if infer_result is not None:
+                        result_img, results = infer_result
+                        if results is not None:
+                            # xyxy_box, xywh_box ,  track_id , label = result
+                            for result in results:
+                                msg = DetectResult()
+                                msg.xyxy_box = result[0]
+                                # print(result[1])
+                                msg.xywh_box = [float(x) for x in result[1]]
+                                msg.track_id = result[2]
+                                msg.label = result[3]
+                                allRobots.detect_results.append(msg)
             
-            self.publisher_.publish(allRobots)
-            # 将result_img 缩放为 800*600
-            result_img = cv2.resize(result_img, (800, 600))
-            self.pub_res.publish(self.bridge.cv2_to_imgmsg(result_img, "bgr8"))
+                self.publisher_.publish(allRobots)
+                # 将result_img 缩放为 800*600
+                result_img = cv2.resize(result_img, (800, 600))
+                self.pub_res.publish(self.bridge.cv2_to_imgmsg(result_img, "bgr8"))
             
-            
-            # cv2.waitKey(1)
-        except Exception as e:
-            self.get_logger().error('Error{0}'.format(e))
+                time.sleep(0.01)   # 锁定检测帧率为100
+                # cv2.waitKey(1)
+            except Exception as e:
+                self.get_logger().error('Error{0}'.format(e))
     
     def __del__(self):
         # Clean Up

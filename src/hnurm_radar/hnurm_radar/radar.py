@@ -18,6 +18,8 @@ import os
 from detect_result.msg import DetectResult
 from detect_result.msg import Robots
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+
+
 class Radar(Node):
 
     def __init__(self):
@@ -27,7 +29,8 @@ class Radar(Node):
             history=HistoryPolicy.KEEP_LAST,
             depth=10
         )
-        
+        # 关闭 Open3D 调试提示
+        o3d.utility.set_verbosity_level(o3d.utility.VerbosityLevel.Error)
         self.bridge = CvBridge()
         # detector_config_path = "./configs/detector_config.yaml"
         # binocular_camera_cfg_path = "./configs/bin_cam_config.yaml"

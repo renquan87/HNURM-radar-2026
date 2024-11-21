@@ -4,6 +4,7 @@ from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import cv2
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy ,qos_profile_sensor_data
+import time
 class VideoPublisher(Node):
     def __init__(self):
         super().__init__('video_publisher')
@@ -13,16 +14,22 @@ class VideoPublisher(Node):
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
-            depth=3
+            depth=10
         )
-        
+        self.last = time.time()
         self.publisher_ = self.create_publisher(Image, 'image', qos_profile)
-        self.timer = self.create_timer(0.016, self.timer_callback)
+        self.timer = self.create_timer(0.006, self.timer_callback)
         self.cap = cv2.VideoCapture(video_file)
         self.bridge = CvBridge()
         self.get_logger().info('Publishing video from: %s' % video_file)
     def timer_callback(self):
+        self.cur = time.time()
+        delta = self.cur - self.last
+        self.last = self.cur
+        # self.get_logger().info('Publishing video, frequency: %.2f Hz' % (1 / delta))
         ret, frame = self.cap.read()
+        # 将frame resize 为1920*1080
+        # cv2.resize(frame, (800, 600))
         if ret:
             msg = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')
             self.publisher_.publish(msg)

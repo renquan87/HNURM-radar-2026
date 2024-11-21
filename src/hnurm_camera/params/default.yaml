@@ -2,9 +2,9 @@
   ros__parameters:
     image_orientation: 0
     # 图像宽度:步进16
-    nWidth: 3072
+    nWidth: 1280
     # 图像高度：步进2
-    nHeight: 2048
+    nHeight: 1024
     # 水平偏移
     nOffsetX: 0
     # 垂直偏移
@@ -18,7 +18,7 @@
     # 013: 0x01100012 bayer gb12
     # 016: 0x01080009 bayer rg8
     # 016: 0x01100011 bayer rg12
-    nPixelFormat: 0x01080009
+    nPixelFormat: 0x01100012
     # 水平合并
     nBinningHorizontal: 1
     # 垂直合并
