@@ -42,18 +42,18 @@ void HKcam::init_params()
 {
     _nImageOrientation = static_cast<int>(_node->declare_parameter("image_orientation", 0));
 
-    _nWidth              = static_cast<int>(_node->declare_parameter("nWidth", 1'280));
-    _nHeight             = static_cast<int>(_node->declare_parameter("nHeight", 720));
+    _nWidth              = static_cast<int>(_node->declare_parameter("nWidth", 1440));
+    _nHeight             = static_cast<int>(_node->declare_parameter("nHeight", 1080));
     _nOffsetX            = static_cast<int>(_node->declare_parameter("nOffsetX", 0));
     _nOffsetY            = static_cast<int>(_node->declare_parameter("nOffsetY", 0));
     _bReverseX           = _node->declare_parameter("bReverseX", false);
     _bReverseY           = _node->declare_parameter("bReverseY", false);
-    _nPixelFormat        = static_cast<int>(_node->declare_parameter("nPixelFormat", 0x02180015));
+    _nPixelFormat        = static_cast<int>(_node->declare_parameter("nPixelFormat", 0x01080009));
     _nAcqFrameRate       = static_cast<int>(_node->declare_parameter("nAcqFrameRate", 30));
     _fFPS                = static_cast<float>(_node->declare_parameter("fFPS", 404.));
     _bEnableAcqFrameRate = _node->declare_parameter("bEnableAcqFrameRate", false);
-    _fExposureTime       = static_cast<float>(_node->declare_parameter("fExposureTime", 5000.));
-    _fGain               = static_cast<float>(_node->declare_parameter("fGain", 8.));
+    _fExposureTime       = static_cast<float>(_node->declare_parameter("fExposureTime", 8000.));
+    _fGain               = static_cast<float>(_node->declare_parameter("fGain", 15.));
     _nBlackLevelValue    = static_cast<int>(_node->declare_parameter("nBlackLevelValue", 30));
     _bEnableBlackLevel   = _node->declare_parameter("bEnableBlackLevel", false);
     _nBayerCvtQuality    = static_cast<int>(_node->declare_parameter("nBayerCvtQuality", 3));

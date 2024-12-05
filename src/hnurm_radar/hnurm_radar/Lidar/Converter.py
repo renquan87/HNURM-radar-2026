@@ -325,7 +325,7 @@ class Converter:
         # box是一个元组，包含了矩形框的左上角和右下角的坐标：(min_u, min_v, max_u, max_v)
         # 好像没有小孔成像的感觉，似乎并不是一个锥形
         min_u, min_v, max_u, max_v = box
-        print(box)
+        print("select pcd rect:" + str(box))
         # 提取像素坐标系下坐标
         uvz = self.camera_to_image(pc)
         # numpy到cupy
@@ -369,8 +369,8 @@ class Converter:
 
     # 对点云进行DBSCAN聚类
     def cluster(self, pcd):
-        with o3d.utility.VerbosityContextManager(o3d.utility.VerbosityLevel.Debug) as cm:
-            labels_np = np.array(pcd.cluster_dbscan(eps=self.eps, min_points=self.min_points,
+        # with o3d.utility.VerbosityContextManager(o3d.utility.VerbosityLevel.Debug) as cm:
+        labels_np = np.array(pcd.cluster_dbscan(eps=self.eps, min_points=self.min_points,
                                                     print_progress=self.print_cluster_progress))
         # 如果没有找到任何簇，返回一个空的点云和中心点
         if len(labels_np) == 0 or np.all(labels_np == -1):

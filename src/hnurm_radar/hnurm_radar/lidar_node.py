@@ -10,7 +10,7 @@ import numpy as np
 from collections import deque
 from sensor_msgs.msg import PointCloud2
 import sensor_msgs_py.point_cloud2 as pc2
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, qos_profile_sensor_data
 import time
 from ruamel.yaml import YAML
 
@@ -71,7 +71,11 @@ class PcdQueue(object):
 class LidarListener(Node):
     def __init__(self, cfg):
         super().__init__('lidar_listener')
-
+        qos__lidar_profile = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10
+        )
         # 参数
         self.height_threshold = cfg["lidar"]["height_threshold"]  # 自身高度，用于去除地面点云
         self.min_distance = cfg["lidar"]["min_distance"]  # 最近距离，距离小于这个范围的不要
@@ -88,7 +92,7 @@ class LidarListener(Node):
         # 订阅/livox/lidar topic
         self.sub_livox = self.create_subscription(PointCloud2, self.lidar_topic_name, self.listener_callback, 10)
         # 发布点云话题
-        self.pub_pcds = self.create_publisher(PointCloud2, "lidar_pcds", qos_profile)
+        self.pub_pcds = self.create_publisher(PointCloud2, "lidar_pcds", qos__lidar_profile)
         
         # 创建并启动发布线程
         self.publish_thread = threading.Thread(target=self.publish_point_cloud)

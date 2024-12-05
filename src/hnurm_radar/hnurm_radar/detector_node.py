@@ -68,7 +68,7 @@ class Detector(Node):
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
-            depth=10
+            depth=3
         )
         # 定期发送检测结果
         self.publisher_ = self.create_publisher(Robots, 'detect_result', qos_profile)

@@ -1,7 +1,8 @@
 #include "hnurm_camera/camera_node.hpp"
 #include <cv_bridge/cv_bridge.h>
 #include <sensor_msgs/image_encodings.hpp>
-
+#include <chrono>
+#include <thread>
 using namespace std::chrono_literals;
 
 namespace hnurm
@@ -13,7 +14,7 @@ void CameraNode::run()
     cam_                         = std::make_shared<HKcam>(shared_from_this());
 
     // using best effort
-    pub_img_  = image_transport::create_publisher(this, camera_img_topic, rmw_qos_profile_sensor_data);
+    pub_img_  = image_transport::create_publisher(this, camera_img_topic, rclcpp::QoS(rclcpp::KeepLast(10)).best_effort().get_rmw_qos_profile());
     cam_info_ = std::make_unique<camera_info_manager::CameraInfoManager>(this, "camera");
 
     capture_thread_ = std::thread([this]() {
@@ -26,6 +27,7 @@ void CameraNode::run()
 
 void CameraNode::timer_callback()
 {
+    // std::this_thread::sleep_for(13ms);
     std::vector<uint8_t> img;
     static long long     img_cnt = 0;
     static auto          prev    = this->now();

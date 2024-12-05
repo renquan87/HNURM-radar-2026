@@ -14,7 +14,7 @@ class VideoPublisher(Node):
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
-            depth=10
+            depth=3
         )
         self.last = time.time()
         self.publisher_ = self.create_publisher(Image, 'image', qos_profile)
@@ -26,10 +26,10 @@ class VideoPublisher(Node):
         self.cur = time.time()
         delta = self.cur - self.last
         self.last = self.cur
-        # self.get_logger().info('Publishing video, frequency: %.2f Hz' % (1 / delta))
+        self.get_logger().info('Publishing video, frequency: %.2f Hz' % (1 / delta))
         ret, frame = self.cap.read()
         # 将frame resize 为1920*1080
-        # cv2.resize(frame, (800, 600))
+        # cv2.resize(frame, (1920, 1080))
         if ret:
             msg = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')
             self.publisher_.publish(msg)

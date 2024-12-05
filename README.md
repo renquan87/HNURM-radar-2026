@@ -17,3 +17,10 @@ ros2 launch livox_ros2_driver livox_lidar_launch.py
 source install/setup.zsh
 ros2 launch foxglove_bridge foxglove_bridge_launch.xml
 ```
+
+# 依赖
+
+```shell
+sudo apt install libpkgconf # livox_driver need
+sudo apt install libpcap-dev
+```

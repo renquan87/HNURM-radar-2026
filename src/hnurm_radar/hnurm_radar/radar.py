@@ -17,7 +17,7 @@ from ruamel.yaml import YAML
 import os
 from detect_result.msg import DetectResult
 from detect_result.msg import Robots
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, qos_profile_sensor_data
 
 
 class Radar(Node):
@@ -29,8 +29,12 @@ class Radar(Node):
             history=HistoryPolicy.KEEP_LAST,
             depth=10
         )
-        # 关闭 Open3D 调试提示
-        o3d.utility.set_verbosity_level(o3d.utility.VerbosityLevel.Error)
+        qos__lidar_profile = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10
+        )
+
         self.bridge = CvBridge()
         # detector_config_path = "./configs/detector_config.yaml"
         # binocular_camera_cfg_path = "./configs/bin_cam_config.yaml"
@@ -65,7 +69,7 @@ class Radar(Node):
         # 订阅Image话题，用于converter初始化
         self.sub_image = self.create_subscription(Image, "image", self.image_callback, qos_profile)
         # 订阅点云话题 detect_pcds
-        self.sub_pcds = self.create_subscription(PointCloud2, "lidar_pcds", self.pcd_callback, qos_profile)
+        self.sub_pcds = self.create_subscription(PointCloud2, "lidar_pcds", self.pcd_callback, qos__lidar_profile)
     def pcd_callback(self, msg):
         '''
         子线程函数，对于/livox/lidar topic数据的处理 , data是传入的
@@ -98,7 +102,7 @@ class Radar(Node):
         if self.lidar_points is None:
             self.get_logger().info("lidar points is None")
             return
-        print(len(self.lidar_points))
+        # print(len(self.lidar_points))
         # 创建总体点云pcd
         pcd_all = o3d.geometry.PointCloud()
         pcd_all.points = o3d.utility.Vector3dVector(self.lidar_points)
@@ -128,10 +132,10 @@ class Radar(Node):
             new_xyxy_box = [xywh_box[0] - new_w / 2, xywh_box[1] - new_h / 2, xywh_box[0] + new_w / 2, xywh_box[1] + new_h / 2]
             # 获取检测框内numpy格式pc
             box_pc = self.converter.get_points_in_box(pcd_all.points, new_xyxy_box)
-            print(len(box_pc))
+            # print(len(box_pc))
             # 如果没有获取到点，直接continue
             if len(box_pc) == 0:
-                print("no points in box")
+                self.get_logger().info("box_pc is None")
                 continue
             box_pcd.points = o3d.utility.Vector3dVector(box_pc)
             # 点云过滤
@@ -172,11 +176,12 @@ class Radar(Node):
                 my_car_infos.append(all_info)
             else:
                 enemy_car_infos.append(all_info)
+                # print(car_id,field_xyz,color)
                 if track_id != -1:
                     # 将每个检测结果添加到列表中，增加frame_id作为每一帧的ID
                     self.all_detections.append([self.frame_id] + list(all_info))
         # 在此发布对方车辆检测结果
-        print(enemy_car_infos)
+        # print(enemy_car_infos)
 
 
 
