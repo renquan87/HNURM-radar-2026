@@ -169,6 +169,7 @@ class Radar(Node):
         # 如果是我方车辆，找到所有敌方车辆，计算与每一台敌方车辆距离，并在图像两车辆中心点之间画线，线上写距离
         for all_info in all_infos:
             track_id , car_id , center_xy , camera_xyz , field_xyz , color , is_valid = all_info
+            
             # 将信息分两个列表存储
             if color == self.global_my_color:
                 if track_id == -1:
@@ -177,7 +178,9 @@ class Radar(Node):
             else:
                 enemy_car_infos.append(all_info)
                 # print(car_id,field_xyz,color)
+                
                 if track_id != -1:
+                    print("car",car_id,field_xyz,color)
                     # 将每个检测结果添加到列表中，增加frame_id作为每一帧的ID
                     self.all_detections.append([self.frame_id] + list(all_info))
         # 在此发布对方车辆检测结果

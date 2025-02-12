@@ -52,11 +52,11 @@ void HKcam::init_params()
     _nAcqFrameRate       = static_cast<int>(_node->declare_parameter("nAcqFrameRate", 30));
     _fFPS                = static_cast<float>(_node->declare_parameter("fFPS", 404.));
     _bEnableAcqFrameRate = _node->declare_parameter("bEnableAcqFrameRate", false);
-    _fExposureTime       = static_cast<float>(_node->declare_parameter("fExposureTime", 8000.));
-    _fGain               = static_cast<float>(_node->declare_parameter("fGain", 15.));
+    _fExposureTime       = static_cast<float>(_node->declare_parameter("fExposureTime", 7000.));
+    _fGain               = static_cast<float>(_node->declare_parameter("fGain", 20.));
     _nBlackLevelValue    = static_cast<int>(_node->declare_parameter("nBlackLevelValue", 30));
     _bEnableBlackLevel   = _node->declare_parameter("bEnableBlackLevel", false);
-    _nBayerCvtQuality    = static_cast<int>(_node->declare_parameter("nBayerCvtQuality", 3));
+    _nBayerCvtQuality    = static_cast<int>(_node->declare_parameter("nBayerCvtQuality", 0));
 
     MV_CC_SetBayerCvtQuality(handle, 3);
 }

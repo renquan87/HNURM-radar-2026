@@ -18,7 +18,7 @@ class VideoPublisher(Node):
         )
         self.last = time.time()
         self.publisher_ = self.create_publisher(Image, 'image', qos_profile)
-        self.timer = self.create_timer(0.006, self.timer_callback)
+        self.timer = self.create_timer(0.016, self.timer_callback)
         self.cap = cv2.VideoCapture(video_file)
         self.bridge = CvBridge()
         self.get_logger().info('Publishing video from: %s' % video_file)
@@ -26,7 +26,7 @@ class VideoPublisher(Node):
         self.cur = time.time()
         delta = self.cur - self.last
         self.last = self.cur
-        self.get_logger().info('Publishing video, frequency: %.2f Hz' % (1 / delta))
+        # self.get_logger().info('Publishing video, frequency: %.2f Hz' % (1 / delta))
         ret, frame = self.cap.read()
         # 将frame resize 为1920*1080
         # cv2.resize(frame, (1920, 1080))

@@ -45,8 +45,8 @@ void CameraNode::timer_callback()
         //        pub_->publish(msg);
         pub_img_.publish(img_msg_);
 
-        auto now = this->now();
-        RCLCPP_INFO(this->get_logger(), "Capture FPS: %f", 1.0 / (now - prev).seconds());
+        // auto now = this->now();
+        // RCLCPP_INFO(this->get_logger(), "Capture FPS: %f", 1.0 / (now - prev).seconds());
         prev = now;
     }
 }
