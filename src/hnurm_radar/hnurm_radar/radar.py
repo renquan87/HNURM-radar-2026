@@ -92,8 +92,8 @@ class Radar(Node):
         frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
         if self.converter_inted:
             return
-        self.converter.camera_to_field_init_by_image(frame)
-        self.converter_inted = True
+        
+        self.converter_inted = self.converter.camera_to_field_init_by_image(frame)
     
     def radar_callback(self, msg):
         if not self.converter_inted:

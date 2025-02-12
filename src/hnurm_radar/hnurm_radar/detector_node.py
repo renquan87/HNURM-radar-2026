@@ -6,6 +6,7 @@ from ruamel.yaml import YAML
 from detect_result.msg import DetectResult
 from detect_result.msg import Robots
 from sensor_msgs.msg import Image
+from .Camera.HKCam import *
 from cv_bridge import CvBridge
 import cv2
 import time
@@ -70,31 +71,40 @@ class Detector(Node):
             history=HistoryPolicy.KEEP_LAST,
             depth=3
         )
+        # 打开相机
+        self.cam = HKCam(0)
+        self.frame = None
+        self.frame_threading = threading.Thread(target=self.sync_frame)
+        self.frame_threading.start()
         # 定期发送检测结果
         self.publisher_ = self.create_publisher(Robots, 'detect_result', qos_profile)
-        self.subscription = self.create_subscription(Image,'image',self.fetchFrames,qos_profile)
+
+        self.pub_image = self.create_publisher(Image, 'image', qos_profile)
         # 用于发布检测图像结果节点
         self.pub_res = self.create_publisher(Image, 'detect_view', qos_profile)
         
-        # 创建大小为maxFrame的队列
-        self.frame_queue = deque(maxlen=10)
+        # 创建图像资源锁
         self._frame_lock = threading.Lock()
         # 创建线程用于推理
         self.threading = threading.Thread(target=self.infer_loop)
         self.threading.start()
-    def fetchFrames(self, msg):
-        # 将ROS图像消息转换为OpenCV图像
-        cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-        # 加锁防止多线程同时访问
-        with self._frame_lock:
-            self.frame_queue.append(cv_image)
+    def sync_frame(self):
+        while rclpy.ok():
+            cam_frame = self.cam.getFrame()
+            # 加锁防止多线程同时访问
+            with self._frame_lock:
+                self.frame = cam_frame.copy()
+            # 发布图像用于radar主线程显示
+            send_frame = cv2.resize(cam_frame, (1920, 1080))
+            self.pub_image.publish(self.bridge.cv2_to_imgmsg(send_frame, "bgr8"))
+            # time.sleep(0.01) 
         
     def getFrame(self):
         with self._frame_lock:
-            if self.frame_queue:
-                return self.frame_queue[-1]
-            else:
+            if self.frame is None:
                 return None
+            else:
+                return self.frame
     # 对results的结果进行判空
     def is_results_empty(self, results):
         if results is None:
@@ -323,9 +333,9 @@ class Detector(Node):
             fps = 1 / (now - self.start_time)
         
             self.start_time = now
-            # self.get_logger().info('Detector FPS: %s' % fps)
+
             try:
-                # 将ROS图像消息转换为OpenCV图像
+                # 获取缓存的图像
                 cv_image = self.getFrame()
                 if cv_image is not None:
                     cv_image = cv_image.copy()
@@ -355,11 +365,9 @@ class Detector(Node):
                 # 将result_img 缩放为 800*600
                 result_img = cv2.resize(result_img, (800, 600))
                 self.pub_res.publish(self.bridge.cv2_to_imgmsg(result_img, "bgr8"))
-            
-                time.sleep(0.01)   # 锁定检测帧率为100
-                # cv2.waitKey(1)
+        
             except Exception as e:
-                self.get_logger().error('Error{0}'.format(e))
+                self.get_logger().error('Error {0}'.format(e))
     
     def __del__(self):
         # Clean Up

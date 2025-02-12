@@ -101,7 +101,7 @@ class Converter:
     def camera_to_field_init_by_image(self, frame):
         show_image = cv2.resize(frame, (1920, 1080))
         cv2.imshow("clear press y else n",show_image)
-        key = cv2.waitKey(0)
+        key = cv2.waitKey(16)
         if key == ord('y'):
             self.pp.caller(frame, self.anchor)
             true_points = np.array([self.left_up, self.left_down, self.right_down, self.right_up], dtype=np.float32)
@@ -123,6 +123,9 @@ class Converter:
             self.camera_to_field_matrix[:3, 3] /= 1000
 
             print(self.camera_to_field_matrix)
+            return True
+        else:
+            return False
     # 相机坐标系到赛场坐标系的初始化
     def camera_to_field_init(self,capture):
         # 初始化要用的类

@@ -20,12 +20,6 @@ def generate_launch_description():
             output='screen',
         ),
         Node(
-            package='hnurm_camera',
-            executable='hnurm_camera_node',
-            output='screen',
-            parameters=[params_file]
-        ),
-        Node(
             package='hnurm_radar',
             executable='detector_node',
             output='screen',
