@@ -43,10 +43,10 @@ field:
     right_down: [8670,8885,120]
     right_up: [8670,8885,420]
   Blue:
-    left_up: [19330,5715,420]
-    left_down: [19330,5715,120]
-    right_down: [19330,6115,120]
-    right_up: [19330,6115,420]
+    left_up: [0,5034,800]
+    left_down: [0,5034,0]
+    right_down: [3104,5113,0]
+    right_up: [3104,5113,800]
   test:
     left_up: [0,0,125] # 22.5 12.5
     left_down: [0,0,0]

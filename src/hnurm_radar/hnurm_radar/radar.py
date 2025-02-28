@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
+from std_msgs.msg import Bool
 import cv2
 from cv_bridge import CvBridge
 import time
@@ -70,6 +71,9 @@ class Radar(Node):
         self.sub_image = self.create_subscription(Image, "image", self.image_callback, qos_profile)
         # 订阅点云话题 detect_pcds
         self.sub_pcds = self.create_subscription(PointCloud2, "lidar_pcds", self.pcd_callback, qos__lidar_profile)
+        # 发布雷达标定完毕标志
+        self.pub_init = self.create_publisher(Bool, "inited", qos_profile)
+        self.init_flag = False
     def pcd_callback(self, msg):
         '''
         子线程函数，对于/livox/lidar topic数据的处理 , data是传入的
@@ -94,6 +98,11 @@ class Radar(Node):
             return
         
         self.converter_inted = self.converter.camera_to_field_init_by_image(frame)
+        if self.converter_inted:
+            msg = Bool()  # 创建布尔消息对象
+            msg.data = True  # 设置布尔值（True/False）
+            self.pub_init.publish(msg)
+            self.get_logger().info("Converter inited")
     
     def radar_callback(self, msg):
         if not self.converter_inted:

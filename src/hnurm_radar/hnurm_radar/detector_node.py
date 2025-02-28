@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
+from std_msgs.msg import Bool
 from ruamel.yaml import YAML
 
 from detect_result.msg import DetectResult
@@ -78,7 +79,8 @@ class Detector(Node):
         self.frame_threading.start()
         # 定期发送检测结果
         self.publisher_ = self.create_publisher(Robots, 'detect_result', qos_profile)
-
+        # 检测标定是否完成
+        self.sub_init = self.create_subscription(Bool, "inited", self.before_initialization, qos_profile)
         self.pub_image = self.create_publisher(Image, 'image', qos_profile)
         # 用于发布检测图像结果节点
         self.pub_res = self.create_publisher(Image, 'detect_view', qos_profile)
@@ -88,15 +90,29 @@ class Detector(Node):
         # 创建线程用于推理
         self.threading = threading.Thread(target=self.infer_loop)
         self.threading.start()
+        # cv2.namedWindow("Window", cv2.WINDOW_NORMAL)
+        # cv2.resizeWindow("Window", 1920, 1080)
+        self.init_flag = False
+        
+    def before_initialization(self, msg):
+        if msg.data == True:
+            self.init_flag = True
+            self.get_logger().info('Radar has been initialized.')
+            self.sub_init.destroy()
+        self.get_logger().info('Radar has not been initialized.')
+    
     def sync_frame(self):
         while rclpy.ok():
             cam_frame = self.cam.getFrame()
             # 加锁防止多线程同时访问
             with self._frame_lock:
                 self.frame = cam_frame.copy()
+            if not self.init_flag:
+                self.get_logger().info('Publishing image...')
+                self.pub_image.publish(self.bridge.cv2_to_imgmsg(self.frame, "bgr8"))
             # 发布图像用于radar主线程显示
-            send_frame = cv2.resize(cam_frame, (1920, 1080))
-            self.pub_image.publish(self.bridge.cv2_to_imgmsg(send_frame, "bgr8"))
+            # send_frame = cv2.resize(cam_frame, (1920, 1080))
+            # self.pub_image.publish(self.bridge.cv2_to_imgmsg(self.frame, "bgr8"))
             # time.sleep(0.01) 
         
     def getFrame(self):
@@ -341,8 +357,10 @@ class Detector(Node):
                     cv_image = cv_image.copy()
                 else:
                     continue
+                cv_image = cv2.resize(cv_image, (1920, 1080))
                 # print(cv_image)
-            
+                cv2.imshow("Window", cv_image)
+                cv2.waitKey(1)
                 allRobots = Robots()
                 # Inference
                 if cv_image is not None:
@@ -354,17 +372,29 @@ class Detector(Node):
                             # xyxy_box, xywh_box ,  track_id , label = result
                             for result in results:
                                 msg = DetectResult()
+                                # 检测输入图像是1920*1080的，由于原图像是3072*2048，将检测到的xy坐标还原到原图像
+                                result[0][0] = int(result[0][0] * 3072 / 1920)
+                                result[0][1] = int(result[0][1] * 2048 / 1080)
+                                result[0][2] = int(result[0][2] * 3072 / 1920)
+                                result[0][3] = int(result[0][3] * 2048 / 1080)
+                                
+                                
+                                
+                                
                                 msg.xyxy_box = result[0]
                                 # print(result[1])
                                 msg.xywh_box = [float(x) for x in result[1]]
                                 msg.track_id = result[2]
                                 msg.label = result[3]
                                 allRobots.detect_results.append(msg)
-            
+                        cv2.imshow("Window", cv_image)
+                        cv2.waitKey(1)
+
+                
                 self.publisher_.publish(allRobots)
                 # 将result_img 缩放为 800*600
-                result_img = cv2.resize(result_img, (800, 600))
-                self.pub_res.publish(self.bridge.cv2_to_imgmsg(result_img, "bgr8"))
+                # result_img = cv2.resize(result_img, (800, 600))
+                # self.pub_res.publish(self.bridge.cv2_to_imgmsg(result_img, "bgr8"))
         
             except Exception as e:
                 self.get_logger().error('Error {0}'.format(e))
