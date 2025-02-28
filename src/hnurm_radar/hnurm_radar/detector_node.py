@@ -22,6 +22,7 @@ from ultralytics import YOLO
 class Detector(Node):
     def __init__(self):
         super().__init__('detector')
+        
         self.start_time = time.time()
         self.bridge = CvBridge()
         # 加载配置文件
@@ -98,6 +99,7 @@ class Detector(Node):
         if msg.data == True:
             self.init_flag = True
             self.get_logger().info('Radar has been initialized.')
+            
             self.sub_init.destroy()
         self.get_logger().info('Radar has not been initialized.')
     
@@ -344,6 +346,8 @@ class Detector(Node):
 
     def infer_loop(self):
         time.sleep(0.5)
+        cv2.namedWindow("Window", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Window", 1920, 1080)
         while rclpy.ok():
             now = time.time()
             fps = 1 / (now - self.start_time)
@@ -378,7 +382,10 @@ class Detector(Node):
                                 result[0][2] = int(result[0][2] * 3072 / 1920)
                                 result[0][3] = int(result[0][3] * 2048 / 1080)
                                 
-                                
+                                result[1][0] = int(result[1][0] * 3072 / 1920)
+                                result[1][1] = int(result[1][1] * 2048 / 1080)
+                                result[1][2] = int(result[1][2] * 3072 / 1920)
+                                result[1][3] = int(result[1][3] * 2048 / 1080)
                                 
                                 
                                 msg.xyxy_box = result[0]
