@@ -15,6 +15,8 @@ find_package(rosidl_default_generators REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/DetectResult.msg"
   "msg/Robots.msg"
+  "msg/Location.msg"
+  "msg/Locations.msg"
 )
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

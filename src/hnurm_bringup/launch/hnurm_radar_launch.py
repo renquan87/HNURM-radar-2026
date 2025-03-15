@@ -27,4 +27,9 @@ def generate_launch_description():
                 'param_name': 'param_value'
             }]
         ),
+        Node(
+            package='hnurm_radar',
+            executable='radar_node',
+            output='screen',
+        ),
     ])

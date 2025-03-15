@@ -19,7 +19,7 @@ import os
 from detect_result.msg import DetectResult
 from detect_result.msg import Robots
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, qos_profile_sensor_data
-
+from detect_result.msg import Location, Locations
 
 class Radar(Node):
 
@@ -49,6 +49,7 @@ class Radar(Node):
         self.carList = CarList(main_cfg)
         self.carList_results = []
         self.all_detections = [] # 创建一个空列表来存储所有检测的结果
+        self.last_all_detections = [] # 创建一个空列表来存储上一帧的检测结果
         # 当前帧ID
         self.frame_id = 1
         self.counter = 0
@@ -74,6 +75,9 @@ class Radar(Node):
         # 发布雷达标定完毕标志
         self.pub_init = self.create_publisher(Bool, "inited", qos_profile)
         self.init_flag = False
+        # 发布车辆位置信息
+        self.pub_location = self.create_publisher(Locations, "location", qos_profile)
+        self.last_frameid = -1
     def pcd_callback(self, msg):
         '''
         子线程函数，对于/livox/lidar topic数据的处理 , data是传入的
@@ -176,6 +180,9 @@ class Radar(Node):
         enemy_car_infos = []
         # result in results:[car_id , center_xy , camera_xyz , field_xyz]
         # 如果是我方车辆，找到所有敌方车辆，计算与每一台敌方车辆距离，并在图像两车辆中心点之间画线，线上写距离
+        
+        allLocation = Locations()
+        
         for all_info in all_infos:
             track_id , car_id , center_xy , camera_xyz , field_xyz , color , is_valid = all_info
             
@@ -189,12 +196,23 @@ class Radar(Node):
                 # print(car_id,field_xyz,color)
                 
                 if track_id != -1:
-                    print("car",car_id,field_xyz,color)
+                    # print("car",car_id,field_xyz,color)
                     # 将每个检测结果添加到列表中，增加frame_id作为每一帧的ID
                     self.all_detections.append([self.frame_id] + list(all_info))
+
+
+                    loc = Location()
+                    loc.x = field_xyz[0]
+                    loc.y = field_xyz[1]
+                    loc.id = car_id
+                    loc.label = color
+                    allLocation.locs.append(loc)
+
+
         # 在此发布对方车辆检测结果
         # print(enemy_car_infos)
-
+        print(allLocation)
+        self.pub_location.publish(allLocation)
 
 
 
