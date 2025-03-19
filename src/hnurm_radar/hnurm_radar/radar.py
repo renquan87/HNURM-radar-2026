@@ -204,6 +204,7 @@ class Radar(Node):
                     loc = Location()
                     loc.x = field_xyz[0]
                     loc.y = field_xyz[1]
+                    loc.z = field_xyz[2]
                     loc.id = car_id
                     loc.label = color
                     allLocation.locs.append(loc)

@@ -29,7 +29,7 @@ def generate_launch_description():
         ),
         Node(
             package='hnurm_radar',
-            executable='radar_node',
+            executable='display_panel',
             output='screen',
         ),
     ])

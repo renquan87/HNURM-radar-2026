@@ -36,9 +36,9 @@ class DisplayPanel(Node):
 
         for i in range(len(cur_locations.locs)):
             location = cur_locations.locs[i]
-            x = round(-location.x, 2)
-            y = round(-location.y + 5, 2)
-            
+            x = round(location.x, 2)
+            y = round(location.y, 2)
+            z = round(location.z, 2)
             
             xx = int( x * 100)
             yy = int( 1500 - y * 100)
@@ -49,11 +49,11 @@ class DisplayPanel(Node):
                 
             if location.label == 'Red':
                 cv2.putText(show_map, str(location.id), (xx - 15, yy + 10), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 4)
-                cv2.putText(show_map, str((x)) + ',' + str((y)), (xx, yy - 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 4)
+                cv2.putText(show_map, str((x)) + ',' + str((y)) + ',' + str(z), (xx, yy - 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 4)
                 cv2.circle(show_map, (xx, yy), 60, (0, 0, 255), 4)
             else:
                 cv2.putText(show_map, str(location.id), (xx - 15, yy + 10), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 0, 0), 4)
-                cv2.putText(show_map, str((x)) + ',' + str((y)), (xx, yy - 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 4)
+                cv2.putText(show_map, str((x)) + ',' + str((y)) + ',' + str(z), (xx, yy - 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 4)
                 cv2.circle(show_map, (xx, yy), 60, (255, 0, 0), 4)
         cv2.imshow('map', show_map)
         cv2.waitKey(16)
