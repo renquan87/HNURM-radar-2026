@@ -363,7 +363,7 @@ class Detector(Node):
                     continue
                 cv_image = cv2.resize(cv_image, (1920, 1080))
                 # print(cv_image)
-                cv2.imshow("Window", cv_image)
+                
                 cv2.waitKey(1)
                 allRobots = Robots()
                 # Inference
@@ -396,7 +396,8 @@ class Detector(Node):
                                 allRobots.detect_results.append(msg)
                         cv2.imshow("Window", cv_image)
                         cv2.waitKey(1)
-
+                else:
+                    cv2.imshow("Window", cv_image)
                 
                 self.publisher_.publish(allRobots)
                 # 将result_img 缩放为 800*600
