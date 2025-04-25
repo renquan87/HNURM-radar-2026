@@ -25,6 +25,7 @@ setup(
             "radar_node = hnurm_radar.radar:main",
             "lidar_node = hnurm_radar.lidar_node:main",
             "display_panel = hnurm_radar.display_panel:main",
+            "judge_messager = hnurm_radar.judge_messager:main",
         ],
     },
 )

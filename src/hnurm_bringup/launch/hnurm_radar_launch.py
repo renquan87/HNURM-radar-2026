@@ -32,4 +32,9 @@ def generate_launch_description():
             executable='display_panel',
             output='screen',
         ),
+        Node(
+            package='hnurm_radar',
+            executable='judge_messager',
+            output='screen',
+        )
     ])
