@@ -844,12 +844,14 @@ class JudgeMessager(Node):
         self.location_lock = threading.Lock()
         self.sub_location = self.create_subscription(Locations, "location", self.location_callback, qos_profile)
         
+        # 双倍易伤计数
+        self.used_double_effect = 0
+        
         # 在创建的线程中处理location
         self.judger = threading.Thread(target=self.judge_loop)
         self.judger.start()
         
-        # 双倍易伤计数
-        self.used_double_effect = 0
+        
         
     # robot_location是一个6*[x,y]的列表，存放敌方机器人坐标
     # 使用0x0305向裁判系统发送敌方机器人定位信息

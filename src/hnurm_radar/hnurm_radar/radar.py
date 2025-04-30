@@ -21,10 +21,16 @@ from detect_result.msg import Robots
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, qos_profile_sensor_data
 from detect_result.msg import Location, Locations
 
+from tf2_ros import TransformException
+from tf2_ros.buffer import Buffer
+from tf2_ros.transform_listener import TransformListener
+from geometry_msgs.msg import TransformStamped
+import yaml
+
 class Radar(Node):
 
     def __init__(self):
-        super().__init__('radar_subscriber')
+        super().__init__('Radar')
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
@@ -58,7 +64,24 @@ class Radar(Node):
         self.converter = Converter(self.global_my_color,converter_config_path)  # 传入的是path
         # 场地解算
         # converter.camera_to_field_init(capture)
-        self.converter_inted = False
+        # self.converter_inted = False
+        
+        # 加载转换器配置文件
+        with open(converter_config_path, 'r', encoding='utf-8') as file:
+            data_loader = yaml.safe_load(file)
+            
+        # 读取相机到雷达外参，用于直接定位
+        # 获取R和T，并将它们转换为NumPy数组
+        self.R = np.array(data_loader['calib']['extrinsic']['R']['data']).reshape(
+            (data_loader['calib']['extrinsic']['R']['rows'], data_loader['calib']['extrinsic']['R']['cols']))
+        self.T = np.array(data_loader['calib']['extrinsic']['T']['data']).reshape(
+            (data_loader['calib']['extrinsic']['T']['rows'], data_loader['calib']['extrinsic']['T']['cols']))
+        # 激光雷达到相机的外参矩阵，4*4的矩阵，前三列为旋转矩阵，第四列为平移矩阵
+        self.extrinsic_matrix = np.hstack((self.R, self.T))
+        self.extrinsic_matrix = np.vstack((self.extrinsic_matrix, [0, 0, 0, 1]))
+        # 相机到激光雷达的外参矩阵，4*4的矩阵，前三列为旋转矩阵，第四列为平移矩阵
+        self.extrinsic_matrix_inv = np.linalg.inv(self.extrinsic_matrix)
+        
         
         self.start_time = time.time()
         # fps计算
@@ -68,22 +91,65 @@ class Radar(Node):
         # 订阅Robots话题
         self.sub_detect = self.create_subscription(Robots, "detect_result", self.radar_callback, qos_profile)
         self.get_logger().info('Radar subscriber has been started at {}.'.format(today))
-        # 订阅Image话题，用于converter初始化
-        self.sub_image = self.create_subscription(Image, "image", self.image_callback, qos_profile)
         # 订阅点云话题 detect_pcds
         self.sub_pcds = self.create_subscription(PointCloud2, "lidar_pcds", self.pcd_callback, qos__lidar_profile)
-        # 发布雷达标定完毕标志
-        self.pub_init = self.create_publisher(Bool, "inited", qos_profile)
-        self.init_flag = False
         # 发布车辆位置信息
         self.pub_location = self.create_publisher(Locations, "location", qos_profile)
         self.last_frameid = -1
+        
+        
+        # 订阅实时icp传来的tf消息
+        self.tf_buffer = Buffer()  # 创建 TF 缓冲区
+        self.tf_listener = TransformListener(self.tf_buffer, self)  # 创建监听器
+        self.timer = self.create_timer(1.0, self.on_timer)  # 定时查询 TF
+    
+    def on_timer(self):
+        try:
+            transform: TransformStamped = self.tf_buffer.lookup_transform(
+                target_frame='map',
+                source_frame='livox',
+                time=rclpy.time.Time()  # 获取最新可用变换
+            )
+            translation = transform.transform.translation
+            rotation = transform.transform.rotation
+            # self.log_transform(transform)
+            # 转换为 4x4 变换矩阵
+            transform_matrix = self.tf_to_matrix(translation, rotation)
+            self.radar_to_field = transform_matrix
+            # self.get_logger().info(f"获取 TF 成功: {transform}")
+        except TransformException as ex:
+            self.radar_to_field = np.ones((4, 4))
+            self.get_logger().error(f"获取 TF 失败: {ex}")    
+    
+    def tf_to_matrix(self, translation, rotation):
+        # 四元数转旋转矩阵
+        q = np.array([rotation.x, rotation.y, rotation.z, rotation.w])
+        R = self.quaternion_to_rotation_matrix(q)
+
+        # 构建 4x4 齐次变换矩阵
+        transform_matrix = np.eye(4)
+        transform_matrix[:3, :3] = R
+        transform_matrix[:3, 3] = [translation.x, translation.y, translation.z]
+        return transform_matrix
+    def quaternion_to_rotation_matrix(self, q):
+        # 四元数转旋转矩阵
+        x, y, z, w = q
+        return np.array([
+            [1 - 2*(y**2 + z**2), 2*(x*y - z*w),     2*(x*z + y*w)],
+            [2*(x*y + z*w),     1 - 2*(x**2 + z**2), 2*(y*z - x*w)],
+            [2*(x*z - y*w),     2*(y*z + x*w),     1 - 2*(x**2 + y**2)]
+        ])
+    
+    def camera_to_lidar(self,pc):
+        pc = np.hstack((pc, np.ones((pc.shape[0], 1))))
+        # 将相机坐标系下的点云转换到雷达坐标系下
+        ret = np.dot(pc, self.extrinsic_matrix)
+        ret = ret[:, :3]
+        return ret
     def pcd_callback(self, msg):
         '''
         子线程函数，对于/livox/lidar topic数据的处理 , data是传入的
         '''
-        if not self.converter_inted:
-            return
         points = pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)
         points = np.array(
                 list(points),
@@ -95,22 +161,8 @@ class Radar(Node):
         self.lidar_points = points
         # self.converter.lidar_to_field(points)
 
-    def image_callback(self, msg):
-        # 转换成cv2格式
-        frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-        if self.converter_inted:
-            return
-        
-        self.converter_inted = self.converter.camera_to_field_init_by_image(frame)
-        if self.converter_inted:
-            msg = Bool()  # 创建布尔消息对象
-            msg.data = True  # 设置布尔值（True/False）
-            self.pub_init.publish(msg)
-            self.get_logger().info("Converter inited")
     
     def radar_callback(self, msg):
-        if not self.converter_inted:
-            return
         detect_results = msg.detect_results
         if self.lidar_points is None:
             self.get_logger().info("lidar points is None")
@@ -121,7 +173,9 @@ class Radar(Node):
         pcd_all.points = o3d.utility.Vector3dVector(self.lidar_points)
         # 将总体点云转到相机坐标系下
         self.converter.lidar_to_camera(pcd_all)
-
+        if self.radar_to_field is None:
+            self.get_logger().info("radar_to_field is None")
+            return
         # 检测框对应点云
         box_pcd = o3d.geometry.PointCloud()
         # 对每个结果进行分析 , 进行目标定位
@@ -145,12 +199,13 @@ class Radar(Node):
             new_xyxy_box = [xywh_box[0] - new_w / 2, xywh_box[1] - new_h / 2, xywh_box[0] + new_w / 2, xywh_box[1] + new_h / 2]
             # 获取检测框内numpy格式pc
             box_pc = self.converter.get_points_in_box(pcd_all.points, new_xyxy_box)
-            # print(len(box_pc))
+            lidar_selected = self.camera_to_lidar(box_pc)
+            
             # 如果没有获取到点，直接continue
-            if len(box_pc) == 0:
+            if len(lidar_selected) == 0:
                 self.get_logger().info("box_pc is None")
                 continue
-            box_pcd.points = o3d.utility.Vector3dVector(box_pc)
+            box_pcd.points = o3d.utility.Vector3dVector(lidar_selected)
             # 点云过滤
             box_pcd = self.converter.filter(box_pcd)
             # 获取box_pcd的中心点
@@ -163,10 +218,17 @@ class Radar(Node):
             distance = self.converter.get_distance(center)
             if distance == 0:
                 continue
+
+            # print((self.camera_to_lidar((center))))
+            center = np.hstack((center, np.array((1))))
+            
+            field_xyz = np.dot(center,self.radar_to_field)
+            field_xyz = field_xyz[:3]
+            self.get_logger().info("field_xyz: {}".format(field_xyz))
             # 将点转到赛场坐标系下
-            field_xyz = self.converter.camera_to_field(center)
+            # field_xyz = self.converter.camera_to_field(center)
             # 计算赛场坐标系下的距离
-            field_distance = self.converter.get_distance(field_xyz)
+            # field_distance = self.converter.get_distance(field_xyz)
             # 在图像上写距离,位置为xyxy_box的左上角,可以去掉
             # if is_debug:
             #     cv2.putText(result_img, "distance: {:.2f}".format(field_distance), (int(xyxy_box[0]), int(xyxy_box[1]),), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 122), 2)
@@ -208,11 +270,6 @@ class Radar(Node):
                     loc.id = car_id
                     loc.label = color
                     allLocation.locs.append(loc)
-
-
-        # 在此发布对方车辆检测结果
-        # print(enemy_car_infos)
-        print(allLocation)
         self.pub_location.publish(allLocation)
 
 

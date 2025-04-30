@@ -81,8 +81,8 @@ class Detector(Node):
         # 定期发送检测结果
         self.publisher_ = self.create_publisher(Robots, 'detect_result', qos_profile)
         # 检测标定是否完成
-        self.sub_init = self.create_subscription(Bool, "inited", self.before_initialization, qos_profile)
-        self.pub_image = self.create_publisher(Image, 'image', qos_profile)
+        # self.sub_init = self.create_subscription(Bool, "inited", self.before_initialization, qos_profile)
+        # self.pub_image = self.create_publisher(Image, 'image', qos_profile)
         # 用于发布检测图像结果节点
         self.pub_res = self.create_publisher(Image, 'detect_view', qos_profile)
         
@@ -95,27 +95,12 @@ class Detector(Node):
         # cv2.resizeWindow("Window", 1920, 1080)
         self.init_flag = False
         
-    def before_initialization(self, msg):
-        if msg.data == True:
-            self.init_flag = True
-            self.get_logger().info('Radar has been initialized.')
-            
-            self.sub_init.destroy()
-        self.get_logger().info('Radar has not been initialized.')
-    
     def sync_frame(self):
         while rclpy.ok():
             cam_frame = self.cam.getFrame()
             # 加锁防止多线程同时访问
             with self._frame_lock:
                 self.frame = cam_frame.copy()
-            if not self.init_flag:
-                self.get_logger().info('Publishing image...')
-                self.pub_image.publish(self.bridge.cv2_to_imgmsg(self.frame, "bgr8"))
-            # 发布图像用于radar主线程显示
-            # send_frame = cv2.resize(cam_frame, (1920, 1080))
-            # self.pub_image.publish(self.bridge.cv2_to_imgmsg(self.frame, "bgr8"))
-            # time.sleep(0.01) 
         
     def getFrame(self):
         with self._frame_lock:
@@ -345,7 +330,7 @@ class Detector(Node):
         return frame
 
     def infer_loop(self):
-        time.sleep(0.5)
+        # time.sleep(0.5)
         cv2.namedWindow("Window", cv2.WINDOW_NORMAL)
         cv2.resizeWindow("Window", 1920, 1080)
         while rclpy.ok():
@@ -400,9 +385,6 @@ class Detector(Node):
                     cv2.imshow("Window", cv_image)
                 
                 self.publisher_.publish(allRobots)
-                # 将result_img 缩放为 800*600
-                # result_img = cv2.resize(result_img, (800, 600))
-                # self.pub_res.publish(self.bridge.cv2_to_imgmsg(result_img, "bgr8"))
         
             except Exception as e:
                 self.get_logger().error('Error {0}'.format(e))

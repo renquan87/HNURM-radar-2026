@@ -225,6 +225,7 @@ class Converter:
         pc = pc[:, :3]
         pc = self.cp2np(pc)
         self.update_pcd(pcd, pc)
+        
 
     # 将角度转为象限 , -22.5-22.5为0,顺时针22.5-67.5为1，以此类推
     def angle_to_quadrant(self, angle):
@@ -328,7 +329,7 @@ class Converter:
         # box是一个元组，包含了矩形框的左上角和右下角的坐标：(min_u, min_v, max_u, max_v)
         # 好像没有小孔成像的感觉，似乎并不是一个锥形
         min_u, min_v, max_u, max_v = box
-        print("select pcd rect:" + str(box))
+        # print("select pcd rect:" + str(box))
         # 提取像素坐标系下坐标
         uvz = self.camera_to_image(pc)
         # numpy到cupy

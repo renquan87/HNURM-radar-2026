@@ -1,0 +1,23 @@
+/**:
+  ros__parameters:
+    pointcloud_sub_topic: "/lidar_pcds"
+    pcd_file: "/home/rm/unit_test/ws/src/target.pcd"
+    num_threads: 7
+    num_neighbors: 20
+    max_dist_sq: 0.5
+    source_voxel_size: 0.25
+    map_voxel_size: 0.25
+
+
+    use_quatro: true
+    #quatro params
+    m_rotation_max_iter: 100
+    m_num_max_corres: 100 
+    m_normal_radius: 0.3 
+    m_fpfh_radius: 1.2 
+    m_distance_threshold: 30.0 
+    m_noise_bound: 0.2 
+    m_rotation_gnc_factor: 1.2 
+    m_rotation_cost_thr: 0.0001
+    m_estimate_scale: false 
+    m_use_optimized_matching: true 

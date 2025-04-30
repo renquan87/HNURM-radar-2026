@@ -1,0 +1,376 @@
+#include "registration/registration_node.hpp"
+using namespace small_gicp;
+
+namespace hnurm {
+
+RelocaliztionNode::RelocaliztionNode(const rclcpp::NodeOptions &options)
+        : Node("RelocaliztionNode", options) 
+{
+  RCLCPP_INFO(get_logger(), "RelocaliztionNode is running");
+  // params declaration
+  pointcloud_sub_topic_ = this->declare_parameter("pointcloud_sub_topic","/cloud_registered"); 
+  pcd_file_ = this->declare_parameter("pcd_file","/home/rm/nav/src/hnunavigation_-ros2/hnurm_perception/PCD/all_raw_points.pcd");
+  num_threads_ = this->declare_parameter("num_threads",4);
+  num_neighbors_ = this->declare_parameter("num_neighbors",20);
+  max_dist_sq_ = this->declare_parameter("max_dist_sq",1.0);
+  source_voxel_size_ = this->declare_parameter("source_voxel_size",0.25);
+  map_voxel_size_ = this->declare_parameter("map_voxel_size_",0.25);
+  use_quatro_ = this->declare_parameter("use_quatro",false);
+
+  m_rotation_max_iter_ = this->declare_parameter("m_rotation_max_iter",100);
+  m_num_max_corres_ = this->declare_parameter("m_num_max_corres",200);
+  m_normal_radius_ = this->declare_parameter("m_normal_radius",0.02);
+  m_fpfh_radius_ = this->declare_parameter("m_fpfh_radius",0.04);
+  m_distance_threshold_ = this->declare_parameter("m_distance_threshold",30.0);
+  m_noise_bound_ = this->declare_parameter("m_noise_bound",0.25);
+  m_rotation_gnc_factor_ = this->declare_parameter("m_rotation_gnc_factor",1.39);
+  m_rotation_cost_thr_ = this->declare_parameter("m_rotation_cost_thr",0.0001);
+  m_estimate_scale_ = this->declare_parameter("m_estimate_scale",false);
+  m_use_optimized_matching_ = this->declare_parameter("m_use_optimized_matching",true);
+
+  if(!use_quatro_)
+  {
+    RCLCPP_INFO(get_logger(), "use small gicp mode,reading params......");
+    RCLCPP_INFO(get_logger(), "get params: pointcloud_sub_topic =%s",pointcloud_sub_topic_.c_str());
+    RCLCPP_INFO(get_logger(), "get params: pcd_file =%s",pcd_file_.c_str());
+    RCLCPP_INFO(get_logger(), "get params: num_threads =%d",num_threads_);
+    RCLCPP_INFO(get_logger(), "get params: num_neighbors =%d",num_neighbors_);
+    RCLCPP_INFO(get_logger(), "get params: max_dist_sq =%f",max_dist_sq_);
+    RCLCPP_INFO(get_logger(), "get params: source_voxel_size =%f",source_voxel_size_);
+    RCLCPP_INFO(get_logger(), "get params: map_voxel_size =%f",map_voxel_size_);
+  }
+  else
+  {
+    RCLCPP_INFO(get_logger(), "use quatro mode,reading params......");
+    RCLCPP_INFO(get_logger(), "get params: m_rotation_max_iter =%d",m_rotation_max_iter_);
+    RCLCPP_INFO(get_logger(), "get params: m_num_max_corres =%d",m_num_max_corres_);
+    RCLCPP_INFO(get_logger(), "get params: m_normal_radius =%f",m_normal_radius_);
+    RCLCPP_INFO(get_logger(), "get params: m_fpfh_radius =%f",m_fpfh_radius_);
+    RCLCPP_INFO(get_logger(), "get params: m_distance_threshold =%f",m_distance_threshold_);
+    RCLCPP_INFO(get_logger(), "get params: m_noise_bound =%f",m_noise_bound_);
+    RCLCPP_INFO(get_logger(), "get params: m_rotation_gnc_factor =%f",m_rotation_gnc_factor_);
+    RCLCPP_INFO(get_logger(), "get params: m_rotation_cost_thr =%f",m_rotation_cost_thr_);
+    if(m_estimate_scale_) RCLCPP_INFO(get_logger(), "get params: m_estimate_scale = true");
+    else RCLCPP_INFO(get_logger(), "get params: m_estimate_scale = false");
+    if(m_use_optimized_matching_) RCLCPP_INFO(get_logger(), "get params: m_use_optimized_matching = true");
+    else RCLCPP_INFO(get_logger(), "get params: m_use_optimized_matching = false");
+  }
+  
+  //set quatro params && initialize handler
+  m_quatro_handler = std::make_shared<quatro<QuatroPointType>>(m_normal_radius_, 
+    m_fpfh_radius_, m_noise_bound_, m_rotation_gnc_factor_, m_rotation_cost_thr_,
+    m_rotation_max_iter_, m_estimate_scale_, m_use_optimized_matching_, 
+    m_distance_threshold_, m_num_max_corres_);
+  
+  tf_buffer_ = std::make_unique<tf2_ros::Buffer>(get_clock());
+  tf_listener_ = std::make_unique<tf2_ros::TransformListener>(*tf_buffer_);
+  tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(*this);
+
+  // init pointcloud pointer
+  source_cloud_.reset(new pcl::PointCloud<pcl::PointXYZ>);
+  source_cloud_downsampled_.reset(new pcl::PointCloud<pcl::PointXYZ>);
+  global_map_downsampled_.reset(new pcl::PointCloud<pcl::PointXYZ>);
+  global_map_.reset(new pcl::PointCloud<pcl::PointXYZ>);  
+  global_map_PointCovariance_.reset(new pcl::PointCloud<pcl::PointCovariance>);
+
+  //load pcd
+  load_pcd_map(pcd_file_);
+  rclcpp::QoS qos_profile(rclcpp::KeepLast(10));
+  qos_profile.reliable();
+
+  //subscribers
+  pointcloud_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+    pointcloud_sub_topic_,
+    rclcpp::SensorDataQoS(),
+    std::bind(&RelocaliztionNode::pointcloud_sub_callback,this,std::placeholders::_1)
+  );
+
+  init_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+    "/initialpose",
+    rclcpp::SensorDataQoS(),
+    std::bind(&RelocaliztionNode::initial_pose_callback,this,std::placeholders::_1)
+  );
+
+
+  //publishers
+  pointcloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/global_pcd_map", 10);
+  timer_ = this->create_wall_timer(std::chrono::milliseconds(2000), std::bind(&RelocaliztionNode::timer_callback, this));
+
+  
+}
+
+void RelocaliztionNode::initial_pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg)
+{
+  geometry_msgs::msg::Transform trans_;
+  trans_.translation.x = msg->pose.pose.position.x;
+  trans_.translation.y = msg->pose.pose.position.y;
+  trans_.translation.z = msg->pose.pose.position.z;
+  trans_.rotation.w = msg->pose.pose.orientation.w;
+  trans_.rotation.x = msg->pose.pose.orientation.x;
+  trans_.rotation.y = msg->pose.pose.orientation.y;
+  trans_.rotation.z = msg->pose.pose.orientation.z;
+  initial_guess_ = tf2::transformToEigen(trans_);
+  // guesses_ = generate_initial_guesses(initial_guess_,0.5,M_PI/6);
+
+  getInitialPose_ = true;
+  RCLCPP_INFO(get_logger(), "Received initial pose:");
+  RCLCPP_INFO(get_logger(), "  Position: [%.2f, %.2f, %.2f]", 
+    msg->pose.pose.position.x, 
+    msg->pose.pose.position.y, 
+    msg->pose.pose.position.z);
+  RCLCPP_INFO(get_logger(), "  Orientation: [%.2f, %.2f, %.2f, %.2f]", 
+    msg->pose.pose.orientation.x,
+    msg->pose.pose.orientation.y,
+    msg->pose.pose.orientation.z,
+    msg->pose.pose.orientation.w);
+  
+  
+
+}
+
+std::vector<Eigen::Isometry3d> RelocaliztionNode::generate_initial_guesses(const Eigen::Isometry3d& initial_pose, double trans_noise,double rot_noise)
+{
+  std::vector<Eigen::Isometry3d> guesses;
+    for (int i = 0; i < 10; ++i) {  // generate 10 guess
+        Eigen::Vector3d trans = Eigen::Vector3d::Random() * trans_noise;
+        Eigen::Vector3d rot_axis = Eigen::Vector3d::Random().normalized();
+        Eigen::AngleAxisd rot(rot_noise * Eigen::internal::random(0.0, 1.0), rot_axis);
+        
+        Eigen::Isometry3d perturbed = initial_pose * Eigen::Translation3d(trans) * rot;
+        guesses.emplace_back(perturbed);
+    }
+    return guesses;
+}
+
+
+void RelocaliztionNode::reset()
+{
+  pre_result_ =  Eigen::Isometry3d::Identity();
+  getInitialPose_ = false;
+  doFirstRegistration_ = false;
+  // RCLCPP_INFO(get_logger(), "receive new initial pose ,reset");
+}
+
+
+void RelocaliztionNode::load_pcd_map(const std::string& map_path){
+  // global_map_.reset(new pcl::PointCloud<pcl::PointXYZ>);
+  if (pcl::io::loadPCDFile<pcl::PointXYZ>(map_path, *global_map_) == -1) {
+    RCLCPP_ERROR(get_logger(), "Failed to load PCD map: %s", map_path.c_str());
+    return;
+  }
+  RCLCPP_INFO(get_logger(), "Loaded PCD map with %ld points", global_map_->size());
+  //downsampling 
+
+  global_map_downsampled_ = voxelgrid_sampling_omp(*global_map_,map_voxel_size_);
+
+  auto t_start = std::chrono::steady_clock::now();
+  global_map_PointCovariance_ = voxelgrid_sampling_omp<pcl::PointCloud<pcl::PointXYZ>, pcl::PointCloud<pcl::PointCovariance>>(*global_map_, map_voxel_size_);
+  estimate_covariances_omp(*global_map_PointCovariance_, num_neighbors_, num_threads_);
+  //build target kd_tree
+  target_tree_ = std::make_shared<KdTree<pcl::PointCloud<pcl::PointCovariance>>>(global_map_PointCovariance_, KdTreeBuilderOMP(num_threads_));
+  auto t_end = std::chrono::steady_clock::now();
+  auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
+  RCLCPP_INFO(get_logger(), "VoxelGrid downsampling took %ld ms", elapsed_ms);
+
+
+  RCLCPP_INFO(this->get_logger(),"Downsampled PCD map to %ld points",global_map_downsampled_->size());
+
+  sensor_msgs::msg::PointCloud2 output_cloud;
+  pcl::toROSMsg(*global_map_downsampled_, output_cloud);
+  output_cloud.header.frame_id = "map";
+  output_cloud.header.stamp = this->now();
+  cloud_ = std::make_shared<sensor_msgs::msg::PointCloud2>(output_cloud);
+}
+
+
+
+void RelocaliztionNode::timer_callback(){
+    if (cloud_)   //test reading pcd
+    {   
+      cloud_->header.stamp = this->now();
+      pointcloud_pub_->publish(*cloud_);
+      if(!use_quatro_)
+      {
+        source_cloud_PointCovariance_ = voxelgrid_sampling_omp<pcl::PointCloud<pcl::PointXYZ>, pcl::PointCloud<pcl::PointCovariance>>(*source_cloud_, source_voxel_size_);
+        // RCLCPP_INFO(this->get_logger(),"publish pcd map");
+        if(source_cloud_PointCovariance_)
+        {
+          relocalization();
+          transform.header.frame_id = "map";  
+          transform.header.stamp = this->now();
+          tf_broadcaster_->sendTransform(transform);
+        }
+      }
+        
+    }
+}
+
+void RelocaliztionNode::pointcloud_sub_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+{
+  if (!getInitialPose_) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), 
+      *get_clock(), 
+      1000,  // 1 second
+      "Waiting for initial pose..."
+    );
+    return;
+  }
+  
+  if(!use_quatro_)
+  {
+    pcl::fromROSMsg(*msg, *source_cloud_);    
+    // source_tree_ = std::make_shared<KdTree<pcl::PointCloud<pcl::PointCovariance>>>(source_cloud_PointCovariance_, KdTreeBuilderOMP(num_threads_));
+    // relocalization(source_cloud_);
+    // relocalization();
+  }
+  else
+  {
+    
+    pcl::fromROSMsg(*msg, *source_cloud_);
+    source_cloud_downsampled_ = voxelgrid_sampling_omp(*source_cloud_,source_voxel_size_);
+    bool if_valid_;
+    Eigen::Matrix4d output_tf_ = m_quatro_handler->align(*source_cloud_downsampled_, *global_map_downsampled_,if_valid_);
+    if (if_valid_)
+    {
+      publishTransform(output_tf_);
+      RCLCPP_INFO(this->get_logger(),"publish tf");
+    }
+    else  RCLCPP_INFO(this->get_logger(),"invalid");
+
+  }
+}
+
+void RelocaliztionNode::publishTransform(const Eigen::Matrix4d& transform_matrix) {
+  geometry_msgs::msg::TransformStamped transform;
+
+  transform.header.stamp = this->now();
+  transform.header.frame_id = "map";   
+  transform.child_frame_id = source_cloud_->header.frame_id;    
+  transform.transform.translation.x = transform_matrix(0, 3);
+  transform.transform.translation.y = transform_matrix(1, 3);
+  transform.transform.translation.z = transform_matrix(2, 3);
+
+  Eigen::Matrix3d rotation = transform_matrix.block<3,3>(0, 0);
+  Eigen::Quaterniond quat(rotation);
+  transform.transform.rotation.x = quat.x();
+  transform.transform.rotation.y = quat.y();
+  transform.transform.rotation.z = quat.z();
+  transform.transform.rotation.w = quat.w();
+
+  tf_broadcaster_->sendTransform(transform);
+}
+
+int fail_counter = 0;
+/// @brief Example to directly feed pcl::PointCloud<pcl::PointCovariance> to small_gicp::Registration.
+void RelocaliztionNode::relocalization() {
+  if (!getInitialPose_) {
+    RCLCPP_WARN(get_logger(), "No initial pose received. Skipping relocalization.");
+    return;
+  }
+  
+  // Downsample points and convert them into pcl::PointCloud<pcl::PointCovariance>.
+  // pcl::PointCloud<pcl::PointCovariance>::Ptr target = voxelgrid_sampling_omp<pcl::PointCloud<pcl::PointXYZ>, pcl::PointCloud<pcl::PointCovariance>>(*raw_target, 0.25);
+  // pcl::PointCloud<pcl::PointCovariance>::Ptr source = voxelgrid_sampling_omp<pcl::PointCloud<pcl::PointXYZ>, pcl::PointCloud<pcl::PointCovariance>>(*raw_source, 0.25);
+
+  // Estimate covariances of points.
+  // const int num_threads = num_threads_;
+  // const int num_neighbors = num_neighbors_;
+  // estimate_covariances_omp(*global_map_PointCovariance_, num_neighbors, num_threads);
+  // estimate_covariances_omp(*source_cloud_PointCovariance_, num_neighbors, num_threads);
+
+  // Create KdTree for target and source.
+  // auto target_tree = std::make_shared<KdTree<pcl::PointCloud<pcl::PointCovariance>>>(global_map_PointCovariance_, KdTreeBuilderOMP(num_threads));
+  // auto source_tree = std::make_shared<KdTree<pcl::PointCloud<pcl::PointCovariance>>>(source, KdTreeBuilderOMP(num_threads));
+
+  Registration<GICPFactor, ParallelReductionOMP> registration;
+  registration.reduction.num_threads = num_threads_;
+  registration.rejector.max_dist_sq = max_dist_sq_;
+  
+  if(doFirstRegistration_){
+      result = registration.align(*global_map_PointCovariance_, *source_cloud_PointCovariance_, *target_tree_, pre_result_);
+  } 
+  // else  
+  // { 
+  //   std::vector<RegistrationResult> results;
+  //   #pragma omp parallel for num_threads(4)
+  //   for(const auto& guess_:guesses_)
+  //   {
+  //     result = registration.align(*global_map_PointCovariance_, *source_cloud_PointCovariance_, *target_tree_, guess_);
+  //     RegistrationResult rs_;
+  //     rs_.converged = result.converged;
+  //     rs_.error = result.error;
+  //     rs_.transformation = result.T_target_source;
+  //     #pragma omp critical
+  //     results.emplace_back(rs_);
+  //   }
+  //   auto best_result = std::min_element(results.begin(), results.end(), 
+  //   [](const auto& a, const auto& b) { return a.error < b.error; });
+  //   pre_result_=best_result->transformation;
+  //   // if(best_result->error>20.0&&!doFirstRegistration_)
+  //   // {
+  //   //   RCLCPP_INFO(get_logger(), "cannot do first registration,reset,result error:%f",best_result->error);
+  //   //   reset();
+  //   //   return;
+  //   // }
+  //   // else pre_result_=best_result->transformation;
+  // }
+  else  
+  { 
+    result = registration.align(*global_map_PointCovariance_, *source_cloud_PointCovariance_, *target_tree_, initial_guess_);
+    if(!result.converged&&!doFirstRegistration_)
+    {
+      RCLCPP_INFO(get_logger(), "cannot do first registration,reset,result error:%f",result.error);
+      reset();
+      transform.header.frame_id = "map";
+      transform.child_frame_id = source_cloud_->header.frame_id;
+      transform.transform = tf2::eigenToTransform(initial_guess_).transform;
+      return;
+    }
+  }
+  
+  // publish map->odom tf
+  if (result.converged) {
+    // pre_result_ = result.T_target_source.inverse();
+    pre_result_ = result.T_target_source;
+    doFirstRegistration_ = true;
+    Eigen::Isometry3d T_map_odom = pre_result_;
+    
+    
+    // publish transform
+    transform.header.stamp = this->now();
+    transform.header.frame_id = "map";
+    transform.child_frame_id = source_cloud_->header.frame_id;
+    transform.transform = tf2::eigenToTransform(T_map_odom).transform;
+        RCLCPP_INFO(get_logger(), "Published map->odom transform,result error:%f",result.error);
+  } else {
+    fail_counter++;
+    if(fail_counter>1)
+    {
+      fail_counter=0;
+      reset();
+      RCLCPP_ERROR(get_logger(), "fail upto the threshold,reset,please set initalpose again");
+    }
+    
+    RCLCPP_ERROR(get_logger(), "Relocalization failed to converge,result error:%f",result.error);
+  }
+
+  // 第一次结果的逆矩阵（map->odom）
+  // std::cout << "--- T_map_odom ---" << std::endl << result.T_target_source.inverse().matrix() << std::endl;
+
+  // std::cout << "--- T_target_source ---" << std::endl << result.T_target_source.matrix() << std::endl;
+  // std::cout << "converged:" << result.converged << std::endl;
+  // std::cout << "error:" << result.error << std::endl;
+  // std::cout << "iterations:" << result.iterations << std::endl;
+  // std::cout << "num_inliers:" << result.num_inliers << std::endl;
+  // std::cout << "--- H ---" << std::endl << result.H << std::endl;
+  // std::cout << "--- b ---" << std::endl << result.b.transpose() << std::endl;
+
+  // // Because this usage exposes all preprocessed data, you can easily re-use them to obtain the best efficiency.
+  // auto result2 = registration.align(*source, *target, *source_tree, Eigen::Isometry3d::Identity());
+
+  // std::cout << "--- T_target_source ---" << std::endl << result2.T_target_source.inverse().matrix() << std::endl;
+}
+
+
+}
