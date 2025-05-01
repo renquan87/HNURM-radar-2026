@@ -116,6 +116,7 @@ class Radar(Node):
             # 转换为 4x4 变换矩阵
             transform_matrix = self.tf_to_matrix(translation, rotation)
             self.radar_to_field = transform_matrix
+            self.radar_to_field_int = np.linalg.inv(self.radar_to_field)
             # self.get_logger().info(f"获取 TF 成功: {transform}")
         except TransformException as ex:
             self.radar_to_field = np.ones((4, 4))
@@ -158,9 +159,18 @@ class Radar(Node):
         points = np.stack([points["x"], points["y"], points["z"]], axis=-1).astype(np.float32)
         
         points = np.array(list(points))
-        self.lidar_points = points
+        self.lidar_points = points.copy()
         # self.converter.lidar_to_field(points)
 
+    def remove_ground_points(self, points):
+        lidar_pts = np.hstack((points, np.ones((points.shape[0], 1))))
+        # 将相机坐标系下的点云转换到地图坐标系下
+        map_pts = np.dot(lidar_pts,self.radar_to_field)
+        # self.get_logger().info("map_pts: {}".format(map_pts))
+        map_pts = map_pts[:, :3]
+        # 过滤地面点 z < 0.2
+        map_pts = map_pts[map_pts[:, 2] > -2]
+        return map_pts
     
     def radar_callback(self, msg):
         detect_results = msg.detect_results
@@ -169,6 +179,7 @@ class Radar(Node):
             return
         # print(len(self.lidar_points))
         # 创建总体点云pcd
+        # lidar_points_fixed = self.remove_ground_points(self.lidar_points)
         pcd_all = o3d.geometry.PointCloud()
         pcd_all.points = o3d.utility.Vector3dVector(self.lidar_points)
         # 将总体点云转到相机坐标系下
@@ -199,13 +210,12 @@ class Radar(Node):
             new_xyxy_box = [xywh_box[0] - new_w / 2, xywh_box[1] - new_h / 2, xywh_box[0] + new_w / 2, xywh_box[1] + new_h / 2]
             # 获取检测框内numpy格式pc
             box_pc = self.converter.get_points_in_box(pcd_all.points, new_xyxy_box)
-            lidar_selected = self.camera_to_lidar(box_pc)
             
             # 如果没有获取到点，直接continue
-            if len(lidar_selected) == 0:
+            if len(box_pc) == 0:
                 self.get_logger().info("box_pc is None")
                 continue
-            box_pcd.points = o3d.utility.Vector3dVector(lidar_selected)
+            box_pcd.points = o3d.utility.Vector3dVector(box_pc)
             # 点云过滤
             box_pcd = self.converter.filter(box_pcd)
             # 获取box_pcd的中心点
@@ -221,8 +231,14 @@ class Radar(Node):
 
             # print((self.camera_to_lidar((center))))
             center = np.hstack((center, np.array((1))))
-            
-            field_xyz = np.dot(center,self.radar_to_field)
+            center = center[:3]
+            center = np.hstack((center, np.array((1))))
+            lidar_center = np.dot(center, self.extrinsic_matrix)
+            lidar_center = lidar_center[:3]
+            self.get_logger().info("lidar_center: {}".format(lidar_center))
+            # self.get_logger().info("center: {}".format(center))
+            lidar_center = np.hstack((lidar_center, np.array((1))))
+            field_xyz = np.dot(self.radar_to_field, lidar_center)
             field_xyz = field_xyz[:3]
             self.get_logger().info("field_xyz: {}".format(field_xyz))
             # 将点转到赛场坐标系下

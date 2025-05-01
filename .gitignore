@@ -7,3 +7,4 @@ __pycache__/
 MvFGSdkLog/
 target.xyz
 map.pcd
+normalized_map.pcd

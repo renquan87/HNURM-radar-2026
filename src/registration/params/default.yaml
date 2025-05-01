@@ -1,7 +1,7 @@
 /**:
   ros__parameters:
     pointcloud_sub_topic: "/lidar_pcds"
-    pcd_file: "/home/rm/unit_test/ws/src/target.pcd"
+    pcd_file: "/home/rm/lsa/radar/hnurm_radar/normalized_map.pcd"
     num_threads: 7
     num_neighbors: 20
     max_dist_sq: 0.5
@@ -9,7 +9,7 @@
     map_voxel_size: 0.25
 
 
-    use_quatro: true
+    use_quatro: false
     #quatro params
     m_rotation_max_iter: 100
     m_num_max_corres: 100 
