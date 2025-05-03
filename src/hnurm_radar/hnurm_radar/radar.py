@@ -162,15 +162,15 @@ class Radar(Node):
         self.lidar_points = points.copy()
         # self.converter.lidar_to_field(points)
 
-    def remove_ground_points(self, points):
-        lidar_pts = np.hstack((points, np.ones((points.shape[0], 1))))
-        # 将相机坐标系下的点云转换到地图坐标系下
-        map_pts = np.dot(lidar_pts,self.radar_to_field)
-        # self.get_logger().info("map_pts: {}".format(map_pts))
-        map_pts = map_pts[:, :3]
-        # 过滤地面点 z < 0.2
-        map_pts = map_pts[map_pts[:, 2] > -2]
-        return map_pts
+    def remove_ground_points(self, pcd, distance_threshold=0.1, ransac_n=3, num_iterations=100):
+        # Use RANSAC to find the ground plane
+        plane_model, inliers = pcd.segment_plane(distance_threshold=distance_threshold,
+                                           ransac_n=ransac_n,
+                                           num_iterations=num_iterations)
+        # Get non-ground points (outliers)
+        non_ground_pcd = pcd.select_by_index(inliers, invert=True)
+    
+        return non_ground_pcd
     
     def radar_callback(self, msg):
         detect_results = msg.detect_results
@@ -182,8 +182,9 @@ class Radar(Node):
         # lidar_points_fixed = self.remove_ground_points(self.lidar_points)
         pcd_all = o3d.geometry.PointCloud()
         pcd_all.points = o3d.utility.Vector3dVector(self.lidar_points)
+        pcd_fixed = self.remove_ground_points(pcd_all)
         # 将总体点云转到相机坐标系下
-        self.converter.lidar_to_camera(pcd_all)
+        self.converter.lidar_to_camera(pcd_fixed)
         if self.radar_to_field is None:
             self.get_logger().info("radar_to_field is None")
             return
@@ -209,7 +210,7 @@ class Radar(Node):
             new_h = xywh_box[3] / div_times
             new_xyxy_box = [xywh_box[0] - new_w / 2, xywh_box[1] - new_h / 2, xywh_box[0] + new_w / 2, xywh_box[1] + new_h / 2]
             # 获取检测框内numpy格式pc
-            box_pc = self.converter.get_points_in_box(pcd_all.points, new_xyxy_box)
+            box_pc = self.converter.get_points_in_box(pcd_fixed.points, new_xyxy_box)
             
             # 如果没有获取到点，直接continue
             if len(box_pc) == 0:
