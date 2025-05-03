@@ -36,5 +36,10 @@ def generate_launch_description():
             package='hnurm_radar',
             executable='judge_messager',
             output='screen',
+        ),
+        Node(
+            package='ekf',
+            executable='ekf_node',
+            output='screen',
         )
     ])

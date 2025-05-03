@@ -842,7 +842,7 @@ class JudgeMessager(Node):
         # 订阅location话题，不断更新检测到机器人位置
         self.locations = Locations()
         self.location_lock = threading.Lock()
-        self.sub_location = self.create_subscription(Locations, "location", self.location_callback, qos_profile)
+        self.sub_location = self.create_subscription(Locations, "ekf_location_filtered", self.location_callback, qos_profile)
         
         # 双倍易伤计数
         self.used_double_effect = 0
@@ -890,7 +890,7 @@ class JudgeMessager(Node):
         self.ser.write(tx_buff)
         
     def judge_loop(self):
-        robot_trans = {101:0,102:1,103:2,104:3,105:4,107:5}
+        robot_trans = {101:0,102:1,103:2,104:3,105:4,107:5, 1:0, 2:1, 3:2, 4:3, 5:4, 7:5}
         while rclpy.ok():
             cur_locations = Locations()
             with self.location_lock:

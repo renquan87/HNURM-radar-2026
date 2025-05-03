@@ -20,7 +20,7 @@ class DisplayPanel(Node):
         self.locations = Locations()
         self.map = cv2.imread('std_map.png')
         
-        self.sub_location = self.create_subscription(Locations, "location", self.location_callback, qos_profile)
+        self.sub_location = self.create_subscription(Locations, "/ekf_location_filtered", self.location_callback, qos_profile)
         # 创建一个锁
         self.lock = threading.Lock()
         
