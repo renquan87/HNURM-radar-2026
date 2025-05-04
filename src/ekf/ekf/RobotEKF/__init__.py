@@ -62,7 +62,7 @@ import numpy as np
 from ekf.tinyekf import EKF
 
 # Note:  谨慎打开加速度选项,因为加速度并没有和速度方向相关联,所以加速度会导致朝某方向快速运动
-ENABLE_ACCELERATION = False
+ENABLE_ACCELERATION = True
 
 
 class RobotEKF(EKF):
@@ -95,7 +95,21 @@ class RobotEKF(EKF):
         F_k.shape = (4, 4)
 
         
-        new_x = F_k.dot(x)
+        if ENABLE_ACCELERATION:
+            # B_k * u_k
+            # 这里注意: B_k * u_k的结果维数要保持和X_k同样的维数,以便做矩阵相加
+            tt = math.pow(self.interval, 2)  # 不做 ms 转 s,单位按 pixels/ms算
+            B_k_dot_u_k = np.array((int(tt/2 * self.acceleration_x),
+                                   int(self.interval * self.acceleration_x),
+                                   int(tt/2 * self.acceleration_y),
+                                   int(self.interval * self.acceleration_y)
+                                    ))
+            print(f"stateTransitionFunction: B_k_dot_u_k={B_k_dot_u_k}")
+
+            # X_k = F_k * X_k-1 + B_k * u_k
+            new_x = F_k.dot(x) + B_k_dot_u_k
+        else:
+            new_x = F_k.dot(x)
 
         return new_x, F_k  # 返回的是一个二维的数组(N,N)，对角线的地方为1，其余的地方为0.
 
