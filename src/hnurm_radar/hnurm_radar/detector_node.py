@@ -95,9 +95,39 @@ class Detector(Node):
         # cv2.resizeWindow("Window", 1920, 1080)
         self.init_flag = False
         
+        # 创建一个图像队列
+        self.image_queue = deque(maxlen=10)
+        self.timestamp_queue = deque(maxlen=10)
+        # 创建一个线程用于保存图像
+        cur_date = time.strftime("%Y-%m-%d-%h-%s", time.localtime())
+        self.video_writer = cv2.VideoWriter("/home/rm/lsa/record" + cur_date + ".avi", cv2.VideoWriter_fourcc(*'XVID'), 60, (3072, 2048))
+        # 打开文件用于保存时间戳
+        self.timestamp_file = open("/home/rm/lsa/record" + cur_date + ".txt", "w")
+        self.save_thread = threading.Thread(target=self.save_image)
+        self.save_thread.start()
+        
+    def save_image(self):
+        while rclpy.ok():
+            if self.is_record:
+                if len(self.image_queue) > 0 and len(self.timestamp_queue) > 0:
+                    # self.get_logger().info("Saving image...")
+                    img = self.image_queue.popleft()
+                    timestp = self.timestamp_queue.popleft()
+                    
+                    self.video_writer.write(img)
+                    self.timestamp_file.write(str(timestp) + "\n")
+                    
+                    # 刷新
+                    self.timestamp_file.flush()
+                    time.sleep(1/self.record_fps)
+            else:
+                time.sleep(0.1)
+        
     def sync_frame(self):
         while rclpy.ok():
             cam_frame = self.cam.getFrame()
+            self.image_queue.append(cam_frame)
+            self.timestamp_queue.append(time.time())
             # 加锁防止多线程同时访问
             with self._frame_lock:
                 self.frame = cam_frame.copy()
