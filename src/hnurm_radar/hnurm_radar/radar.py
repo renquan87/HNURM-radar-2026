@@ -102,6 +102,8 @@ class Radar(Node):
         self.tf_buffer = Buffer()  # 创建 TF 缓冲区
         self.tf_listener = TransformListener(self.tf_buffer, self)  # 创建监听器
         self.timer = self.create_timer(1.0, self.on_timer)  # 定时查询 TF
+        self.radar_to_field = np.ones((4, 4))
+        self.radar_to_field_inv = np.ones((4, 4))
     
     def on_timer(self):
         try:
@@ -116,7 +118,7 @@ class Radar(Node):
             # 转换为 4x4 变换矩阵
             transform_matrix = self.tf_to_matrix(translation, rotation)
             self.radar_to_field = transform_matrix
-            self.radar_to_field_int = np.linalg.inv(self.radar_to_field)
+            self.radar_to_field_inv = np.linalg.inv(self.radar_to_field)
             # self.get_logger().info(f"获取 TF 成功: {transform}")
         except TransformException as ex:
             self.radar_to_field = np.ones((4, 4))
@@ -162,15 +164,41 @@ class Radar(Node):
         self.lidar_points = points.copy()
         # self.converter.lidar_to_field(points)
 
-    def remove_ground_points(self, pcd, distance_threshold=0.1, ransac_n=3, num_iterations=100):
-        # Use RANSAC to find the ground plane
-        plane_model, inliers = pcd.segment_plane(distance_threshold=distance_threshold,
-                                           ransac_n=ransac_n,
-                                           num_iterations=num_iterations)
-        # Get non-ground points (outliers)
-        non_ground_pcd = pcd.select_by_index(inliers, invert=True)
-    
-        return non_ground_pcd
+    def remove_ground_points(self, pcd):
+        if self.radar_to_field is None:
+            self.get_logger().info("radar_to_field is None, skip removing process")
+            return pcd
+
+        points = np.asarray(pcd.points)
+        # self.get_logger().info("points: {}".format(points))
+        # 添加一列全为 1 的列，扩展为齐次坐标
+        points = np.hstack((points, np.ones((points.shape[0], 1))))
+
+        # 转换到赛场坐标系
+        field_pts = np.dot(points,self.radar_to_field)  # 转置以保持形状一致
+        field_pts = field_pts[:, :3]  # 去掉齐次坐标的最后一列
+
+        # 筛选 z 值不在范围内的点
+        mask = ((points[:, 2] < -0.6) | (points[:, 2] > 0)) & ((points[:, 2] < 1) | (points[:, 2] > 1.2))
+        filtered_points = field_pts[mask]
+
+        # 检查过滤后的点云
+        if filtered_points.size == 0:
+            self.get_logger().info("No points left after filtering.")
+            return o3d.geometry.PointCloud()
+
+        # 再转换回到雷达坐标系
+        filtered_points = np.hstack((filtered_points, np.ones((filtered_points.shape[0], 1))))
+        filtered_points = np.dot(filtered_points, self.radar_to_field_inv)  # 转置以保持形状一致
+        filtered_points = filtered_points[:, :3]  # 去掉齐次坐标的最后一列
+
+        # 创建新的点云
+        filtered_pcd = o3d.geometry.PointCloud()
+        filtered_pcd.points = o3d.utility.Vector3dVector(filtered_points)
+
+        # 可视化过滤后点云
+        # o3d.visualization.draw_geometries([filtered_pcd])
+        return filtered_pcd
     
     def radar_callback(self, msg):
         detect_results = msg.detect_results
@@ -183,6 +211,9 @@ class Radar(Node):
         pcd_all = o3d.geometry.PointCloud()
         pcd_all.points = o3d.utility.Vector3dVector(self.lidar_points)
         pcd_fixed = self.remove_ground_points(pcd_all)
+        # pcd_fixed = pcd_all
+        # pcd_print = np.hstack((self.lidar_points, np.ones((self.lidar_points.shape[0], 1))))
+        # self.get_logger().info("pcd_print: {}".format(pcd_print.T))
         # 将总体点云转到相机坐标系下
         self.converter.lidar_to_camera(pcd_fixed)
         if self.radar_to_field is None:
