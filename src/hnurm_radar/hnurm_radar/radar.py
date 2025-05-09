@@ -26,7 +26,7 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 from geometry_msgs.msg import TransformStamped
 import yaml
-
+from std_msgs.msg import Header
 class Radar(Node):
 
     def __init__(self):
@@ -96,7 +96,8 @@ class Radar(Node):
         # 发布车辆位置信息
         self.pub_location = self.create_publisher(Locations, "location", qos_profile)
         self.last_frameid = -1
-        
+        # 可视化去除地面后的点云
+        self.pub_nognd = self.create_publisher(PointCloud2, "pcd_removed", qos__lidar_profile)
         
         # 订阅实时icp传来的tf消息
         self.tf_buffer = Buffer()  # 创建 TF 缓冲区
@@ -179,7 +180,7 @@ class Radar(Node):
         field_pts = field_pts[:, :3]  # 去掉齐次坐标的最后一列
 
         # 筛选 z 值不在范围内的点
-        mask = ((points[:, 2] < -0.6) | (points[:, 2] > 0)) & ((points[:, 2] < 1) | (points[:, 2] > 1.2))
+        mask = ((field_pts[:, 2] > -11111))
         filtered_points = field_pts[mask]
 
         # 检查过滤后的点云
@@ -196,6 +197,18 @@ class Radar(Node):
         filtered_pcd = o3d.geometry.PointCloud()
         filtered_pcd.points = o3d.utility.Vector3dVector(filtered_points)
 
+        header = Header()
+        header.stamp = self.get_clock().now().to_msg()
+        header.frame_id = "livox"
+        # 以fileds x,y,z打包
+        fields = [
+                    pc2.PointField(name='x', offset=0, datatype=pc2.PointField.FLOAT32, count=1),
+                    pc2.PointField(name='y', offset=4, datatype=pc2.PointField.FLOAT32, count=1),
+                    pc2.PointField(name='z', offset=8, datatype=pc2.PointField.FLOAT32, count=1),
+                ]
+        pc = pc2.create_cloud(header, fields, field_pts)
+        self.pub_nognd.publish(pc)
+        
         # 可视化过滤后点云
         # o3d.visualization.draw_geometries([filtered_pcd])
         return filtered_pcd

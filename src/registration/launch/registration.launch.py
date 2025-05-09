@@ -20,8 +20,7 @@ def generate_launch_description():
             executable='registration_node',
             output='screen',
             parameters=[params_file]
-        )
-        ,
+        ),
         Node(
             package='rviz2',
             executable='rviz2',
@@ -29,4 +28,5 @@ def generate_launch_description():
             output='screen',
             arguments=['-d', "/home/rm/lsa/radar/hnurm_radar/icp.rviz"]
         )
+
     ])

@@ -50,6 +50,8 @@ class DisplayPanel(Node):
             if location.label == 'Red':
                 x = 28 - x
                 y = 15 - y
+                x = round(location.x, 2)
+                y = round(location.y, 2)
                 xx = 2800 - xx
                 yy = 1500 - yy
                 cv2.putText(show_map, str(location.id), (xx - 15, yy + 10), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 4)

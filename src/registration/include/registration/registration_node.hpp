@@ -68,6 +68,7 @@ class RelocaliztionNode : public rclcpp::Node{
     void initial_pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
     void load_pcd_map(const std::string& map_path);  
     void timer_callback();
+    void timer_pub_tf_callback();
 
     void relocalization();
     void reset();
@@ -81,6 +82,7 @@ class RelocaliztionNode : public rclcpp::Node{
 
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pointcloud_pub_;
     rclcpp::TimerBase::SharedPtr timer_;
+    rclcpp::TimerBase::SharedPtr timer_pub_tf_;
 
 
     std::unique_ptr<tf2_ros::TransformListener> tf_listener_;
@@ -94,9 +96,17 @@ class RelocaliztionNode : public rclcpp::Node{
     pcl::PointCloud<pcl::PointXYZ>::Ptr global_map_downsampled_;  //target 
     pcl::PointCloud<pcl::PointCovariance>::Ptr global_map_PointCovariance_;
 
+    int accumulation_counter_ = 0;
     pcl::PointCloud<pcl::PointXYZ>::Ptr source_cloud_;  //source 
+    pcl::PointCloud<pcl::PointXYZ>::Ptr accumulate_cloud_;
     pcl::PointCloud<pcl::PointXYZ>::Ptr source_cloud_downsampled_;  //source 
+
+
+
     pcl::PointCloud<pcl::PointCovariance>::Ptr source_cloud_PointCovariance_;
+
+
+
     std::vector<Eigen::Isometry3d> guesses_;
     Eigen::Isometry3d initial_guess_ = Eigen::Isometry3d::Identity();
 
@@ -121,6 +131,8 @@ class RelocaliztionNode : public rclcpp::Node{
     Eigen::Isometry3d pre_result_ = Eigen::Isometry3d::Identity();
     small_gicp::RegistrationResult result;
 
+    bool get_first_tf_from_quatro_ = false;
+
 
 
     teaser::RobustRegistrationSolver::Params params;
@@ -130,6 +142,8 @@ class RelocaliztionNode : public rclcpp::Node{
     //params 
     std::string pointcloud_sub_topic_;
     std::string pcd_file_;
+    std::string downsampled_pcd_file_;
+    bool generate_downsampled_pcd_ = false;
     int num_threads_;
     int num_neighbors_;
     float max_dist_sq_;
@@ -137,7 +151,8 @@ class RelocaliztionNode : public rclcpp::Node{
     float map_voxel_size_;
 
     bool use_quatro_ = false;
-
+    bool use_fixed_ = false;
+   
     //quatro++ params
 
 
