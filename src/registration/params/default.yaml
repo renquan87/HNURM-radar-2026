@@ -1,8 +1,8 @@
 /**:
   ros__parameters:
     pointcloud_sub_topic: "/lidar_pcds"
-    pcd_file: "/home/rm/lsa/radar/hnurm_radar/normalized_map.pcd"
-    downsampled_pcd_file_: "/home/rm/lsa/radar/hnurm_radar/normalized_map_downsample.pcd"
+    pcd_file: "/home/rq/radar/hnurm_radar/normalized_map.pcd"
+    downsampled_pcd_file_: "/home/rq/radar/hnurm_radar/normalized_map_downsample.pcd"
     generate_downsampled_pcd : false   # please turn this off when using registration
     num_threads: 7
     num_neighbors: 20

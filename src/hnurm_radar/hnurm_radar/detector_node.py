@@ -17,7 +17,7 @@ import sys
 import os
 from collections import deque
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, qos_profile_sensor_data
-sys.path.append(os.path.join("/home/rm/lsa/radar/hnurm_radar/src/hnurm_radar/"))
+sys.path.append(os.path.join("/home/rq/radar/hnurm_radar/src/hnurm_radar/"))
 from ultralytics import YOLO
 class Detector(Node):
     def __init__(self):
@@ -26,7 +26,7 @@ class Detector(Node):
         self.start_time = time.time()
         self.bridge = CvBridge()
         # 加载配置文件
-        self.cfg = YAML().load(open("/home/rm/lsa/radar/hnurm_radar/configs/detector_config.yaml", encoding='Utf-8', mode='r'))
+        self.cfg = YAML().load(open("/home/rq/radar/hnurm_radar/configs/detector_config.yaml", encoding='Utf-8', mode='r'))
         # flag
         self.is_record = self.cfg['is_record']
         self.record_fps = self.cfg['record_fps']
@@ -100,9 +100,9 @@ class Detector(Node):
         self.timestamp_queue = deque(maxlen=10)
         # 创建一个线程用于保存图像
         cur_date = time.strftime("%Y-%m-%d-%h-%s", time.localtime())
-        self.video_writer = cv2.VideoWriter("/home/rm/lsa/record" + cur_date + ".avi", cv2.VideoWriter_fourcc(*'XVID'), 60, (3072, 2048))
+        self.video_writer = cv2.VideoWriter("/home/rq/record" + cur_date + ".avi", cv2.VideoWriter_fourcc(*'XVID'), 60, (3072, 2048))
         # 打开文件用于保存时间戳
-        self.timestamp_file = open("/home/rm/lsa/record" + cur_date + ".txt", "w")
+        self.timestamp_file = open("/home/rq/record" + cur_date + ".txt", "w")
         self.save_thread = threading.Thread(target=self.save_image)
         self.save_thread.start()
         

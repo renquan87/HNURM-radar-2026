@@ -11,6 +11,6 @@ cmds=(
 for cmd in "${cmds[@]}"
 do
     echo Current CMD : "$cmd"
-    gnome-terminal -- bash -c "cd $(pwd);source /home/rm/lsa/radar/hnurm_radar/install/setup.bash;$cmd;exec bash;"
+    gnome-terminal -- bash -c "cd $(pwd);source /home/rq/radar/hnurm_radar/install/setup.bash;$cmd;exec bash;"
     sleep 0.1
 done

@@ -26,7 +26,7 @@ def generate_launch_description():
             executable='rviz2',
             name='rviz2',
             output='screen',
-            arguments=['-d', "/home/rm/lsa/radar/hnurm_radar/icp.rviz"]
+            arguments=['-d', "/home/rq/radar/hnurm_radar/icp.rviz"]
         )
 
     ])

@@ -24,7 +24,7 @@ def generate_launch_description():
             executable='publish_video',
             output='screen',
             parameters=[{
-                'video_file': '/home/rm/lsa/radar/video.avi'
+                'video_file': '/home/rq/radar/video.avi'
             }]
         ),
         Node(
