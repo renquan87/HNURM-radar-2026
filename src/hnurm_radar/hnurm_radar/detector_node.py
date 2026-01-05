@@ -19,6 +19,8 @@ from collections import deque
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, qos_profile_sensor_data
 sys.path.append(os.path.join("/home/rq/radar/hnurm_radar/src/hnurm_radar/"))
 from ultralytics import YOLO
+
+# 检测节点类
 class Detector(Node):
     def __init__(self):
         super().__init__('detector')
@@ -27,11 +29,11 @@ class Detector(Node):
         self.bridge = CvBridge()
         # 加载配置文件
         self.cfg = YAML().load(open("/home/rq/radar/hnurm_radar/configs/detector_config.yaml", encoding='Utf-8', mode='r'))
-        # flag
+        # 记录相关参数 flag and fps
         self.is_record = self.cfg['is_record']
         self.record_fps = self.cfg['record_fps']
         
-        # Load models
+        # 初始化并加载 3 个 YOLO 模型，分别用于：目标检测 → 目标分类 → 灰度/细分类
         self.get_logger().info('Loading Yolo models...')
         self.model_car = YOLO(self.cfg['path']['stage_one_path'] , task = "detect")
         self.model_car.overrides['imgsz'] = 1280
@@ -41,7 +43,7 @@ class Detector(Node):
         self.model_car3.overrides['imgsz']=256
         self.get_logger().info('Yolo models loaded.')
         
-        # Set Detector Parameters
+        # 读取追踪器路径和各阶段 YOLO 的置信度阈值，设置目标生命周期，并初始化一个用于分配目标 ID 的缓存表
         self.tracker_path = self.cfg['path']['tracker_path']
         self.stage_one_conf = self.cfg['params']['stage_one_conf']
         self.stage_two_conf = self.cfg['params']['stage_two_conf']
@@ -59,6 +61,7 @@ class Detector(Node):
             self.Track_value[i] = [0] * self.class_num
         self.id_candidate = [0] * 10000
         
+        # 灰色装甲板的类别映射
         self.Gray2Blue = {12:5,13:1,14:0,15:3,16:2,17:4}
         self.Gray2Red = {12:11,13:7,14:6,15:9,16:8,17:10}
         self.gray2gray = {0:14,1:13,2:16,3:15,4:17,5:12}
@@ -68,6 +71,7 @@ class Detector(Node):
         
         # 设置计数器
         self.loop_times = 0
+        # QoS 设置
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
@@ -76,6 +80,7 @@ class Detector(Node):
         # 打开相机
         self.cam = HKCam(0)
         self.frame = None
+        # 启动图像同步线程
         self.frame_threading = threading.Thread(target=self.sync_frame)
         self.frame_threading.start()
         # 定期发送检测结果
@@ -105,7 +110,8 @@ class Detector(Node):
         self.timestamp_file = open("/home/rq/record" + cur_date + ".txt", "w")
         self.save_thread = threading.Thread(target=self.save_image)
         self.save_thread.start()
-        
+
+    # 保存图像函数    
     def save_image(self):
         while rclpy.ok():
             if self.is_record:
@@ -122,7 +128,8 @@ class Detector(Node):
                     time.sleep(1/self.record_fps)
             else:
                 time.sleep(0.1)
-        
+
+    # 同步图像函数    
     def sync_frame(self):
         while rclpy.ok():
             cam_frame = self.cam.getFrame()
@@ -131,7 +138,8 @@ class Detector(Node):
             # 加锁防止多线程同时访问
             with self._frame_lock:
                 self.frame = cam_frame.copy()
-        
+
+    # 获取图像函数    
     def getFrame(self):
         with self._frame_lock:
             if self.frame is None:
@@ -154,10 +162,12 @@ class Detector(Node):
         boxes = results[0].boxes.xywh.cpu().numpy()
         track_ids = results[0].boxes.id.int().cpu().tolist()
         return confidences, boxes, track_ids
+    
     # 一阶段追踪推理
     def track_infer(self, frame):
         results = self.model_car.track(frame, persist=True,tracker=self.tracker_path,verbose = False)
         return results
+    
     # 二阶段分类推理Classify
     def classify_infer(self, roi_list): # 输入原图和box, 返回分类结果
         # print((roi_list))
@@ -322,6 +332,7 @@ class Detector(Node):
             # 把识别的box，conf和最终的类别组合后返回
             # tracker_results.append((box, label, conf)) # 返回的是一个列表，每个元素是一个元组，包含了box, 分类结果和置信度
 
+            # 画出候选框
             x_left = int(x - w / 2)
             y_left = int(y - h / 2)
             x_right = int(x + w / 2)
@@ -359,6 +370,7 @@ class Detector(Node):
                           (0, 255, 122), 5)
         return frame
 
+    # 推理循环函数
     def infer_loop(self):
         # time.sleep(0.5)
         cv2.namedWindow("Window", cv2.WINDOW_NORMAL)

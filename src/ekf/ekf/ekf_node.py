@@ -9,6 +9,7 @@ from detect_result.msg import Robots
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, qos_profile_sensor_data
 from ekf.RobotEKF import RobotEKF
 
+# 机器人信息类
 class RobotInfo(object):
 
     def __init__(self, time, x, y, z):
@@ -16,14 +17,15 @@ class RobotInfo(object):
         self.time = time
         self.v_x = 0
         self.v_y = 0
-        self.last_v_x = 0
-        self.last_v_y = 0
+        self.last_v_x = 0 # 上一次的速度
+        self.last_v_y = 0 # 上一次的速度
         self.a_x = 0   # V1 = V0 + at   -> a = (v1-v0)/t
         self.a_y = 0
 
     def __str__(self):
         return '%4d %4d %4d %4d' % (self.time, self.x, self.y, self.z)
     
+    # 计算速度和加速度
     def calculateInfo(self, last_info):
 
         if last_info.x > 0 and last_info.y > 0:
@@ -39,17 +41,20 @@ class RobotInfo(object):
 
 
 
-
+# EKF节点类
 class EKFNode(Node):
     def __init__(self):
         super().__init__('ekf_node')
         
+        # QoS 设置
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
             depth=10
         )
+        # 记录敌方颜色
         self.eneny_color = 'NULL'
+        # 机器人ID映射到数组下标
         self.transform_to_th = {
             1: 1,
             2: 2,
@@ -64,26 +69,31 @@ class EKFNode(Node):
             105: 5,
             107: 6
         }
-        # 修改噪声参数q，r减小突变对数据的影响
+        # 初始化6个机器人的EKF滤波器，修改噪声参数q，r减小突变对数据的影响
         self.kalfilt = [
             RobotEKF(4, 4, pval=0.001, qval=1e-4, rval=0.0005, interval=0.05) for _ in range(6)
         ]
 
+        # 创建发布者和订阅者
         self.pub_location_filtered = self.create_publisher(Locations, 'ekf_location_filtered', qos_profile)
         self.sub_location = self.create_subscription(Locations, "location", self.location_callback, qos_profile)
+        # 初始化变量
         self.recv_location = Locations()
         self.last_location = Locations()
+        # 创建定时器
         self.timer = self.create_timer(0.05, self.timer_callback)  # 50 ms
         
-        # 保存上次和当前的机器人位置信息 [0]是上次的， [1]是当前的
+        # 初始化位置队列，保存上次和当前的机器人位置信息 [0]是上次的， [1]是当前的
         self.locations_queue = [[RobotInfo(0,0,0, 0), RobotInfo(0,0,0,0), RobotInfo(0,0,0,0), RobotInfo(0,0,0,0),RobotInfo(0,0,0,0),RobotInfo(0,0,0,0)] for i in range(2)]
-        
+
+    # 获取当前时间的毫秒数    
     def get_current_time_ms(self):
         current_time = self.get_clock().now()
         time_msg = current_time.to_msg()
         milliseconds = time_msg.sec * 1000 + time_msg.nanosec / 1e6
         return milliseconds
-        
+
+    # 定时器回调函数    
     def timer_callback(self):
         self.get_logger().info(f"Timestamp: {self.get_clock().now()}, Location: {self.recv_location.__str__()}")
         # self.get_logger().info(f"Timestamp: {self.get_current_time_ms()}, Location: {self.recv_location.__str__()}")
@@ -144,7 +154,7 @@ class EKFNode(Node):
         self.pub_location_filtered.publish(locations)
             
                 
-    
+    # 订阅位置信息的回调函数
     def location_callback(self, msg):
         # self.get_logger().info(f"Received location: {msg}")
         self.recv_location = msg

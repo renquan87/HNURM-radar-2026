@@ -103,7 +103,7 @@ class Lddc {
   uint8_t output_type_;
   double publish_frq_;
   uint32_t publish_period_ns_;
-  std::string frame_id_;
+  std::string frame_id_; // 参数化定义，成员变量，用于设置frame_id
 
   std::shared_ptr<rclcpp::PublisherBase>private_pub_[kMaxSourceLidar];
   std::shared_ptr<rclcpp::PublisherBase>global_pub_;

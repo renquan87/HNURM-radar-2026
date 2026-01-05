@@ -20,7 +20,7 @@ communication:
 
 
 area: # 每一个area是一个列表，元素为点的二元组，表示一个凹多边形 , 从左上角逆时针 , 赛场是对称的，红方左下为原点0，0，蓝方右上为28，15
-  hero_times_threshold: 2 # 连续5帧检测到英雄才认为英雄在这个区域
+  hero_times_threshold: 2 # 连续2帧检测到英雄才认为英雄在这个区域
   send_double_threshold: 10 # 连续10帧检测到英雄启动双倍易伤
   Blue: # 我方为蓝色时
     length: 5 # 5个区域

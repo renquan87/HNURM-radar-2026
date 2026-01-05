@@ -29,6 +29,7 @@ class HKCam:
             deviceList.pDeviceInfo[int(cameraId)], POINTER(MV_CC_DEVICE_INFO)
         ).contents
 
+        # ch:创建句柄 | en:Create handle
         ret = self.cam.MV_CC_CreateHandle(stDeviceList)
         if ret != 0:
             print("create handle fail! ret[0x%x]" % ret)

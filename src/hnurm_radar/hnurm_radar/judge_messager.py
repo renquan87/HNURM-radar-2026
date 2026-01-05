@@ -193,7 +193,7 @@ class Receiver:
 
 
 
-        self.ser = serial.Serial('/dev/ttyACM0', 115200, timeout=1)
+        self.ser = serial.Serial('/dev/ttyACM0', 115200, timeout=1) # 串口初始化
         self.fps = 100 # 控制主线程帧率为100Hz
         # CRC表
         self.CRC8_TABLE = [
@@ -281,13 +281,13 @@ class Receiver:
 
         # self.threading.join()
 
-    def get_crc16_check_byte(self, data):
+    def get_crc16_check_byte(self, data): # 计算crc16校验值
         crc = 0xffff
         for byte in data:
             crc = ((crc >> 8) ^ self.CRC16_TABLE[(crc ^ byte) & 0xff])
         return crc
 
-    def get_crc8_check_byte(self,data):
+    def get_crc8_check_byte(self,data): # 计算crc8校验值
         crc = 0xff
         for byte in data:
             crc_index = crc ^ byte
@@ -622,7 +622,7 @@ bit 7-15：保留
 
 
 
-    # 比赛进行时间时间解析
+    # 比赛进行时间解析
     def process_game_status(self,data):
         time_left = data[1]+data[2]*256
         self.shared_time_left.value = time_left
@@ -889,7 +889,7 @@ class JudgeMessager(Node):
         tx_buff += frame_tail
         self.ser.write(tx_buff)
         
-    def judge_loop(self):
+    def judge_loop(self): # 主循环，不断发送敌方机器人位置和双倍易伤信息
         robot_trans = {101:0,102:1,103:2,104:3,105:4,107:5, 1:0, 2:1, 3:2, 4:3, 5:4, 7:5}
         while rclpy.ok():
             cur_locations = Locations()

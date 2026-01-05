@@ -58,6 +58,7 @@ class Radar(Node):
         self.last_all_detections = [] # 创建一个空列表来存储上一帧的检测结果
         # 当前帧ID
         self.frame_id = 1
+        # 计数器，用于计算fps
         self.counter = 0
         
         today = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()) # 今日日期，例如2024年5月6日则为20240506
@@ -70,16 +71,16 @@ class Radar(Node):
         with open(converter_config_path, 'r', encoding='utf-8') as file:
             data_loader = yaml.safe_load(file)
             
-        # 读取相机到雷达外参，用于直接定位
-        # 获取R和T，并将它们转换为NumPy数组
+        # 读取激光雷达到相机外参
+        # 构建旋转和平移矩阵，4*3的矩阵，前三列为旋转矩阵，第四列为平移矩阵
         self.R = np.array(data_loader['calib']['extrinsic']['R']['data']).reshape(
             (data_loader['calib']['extrinsic']['R']['rows'], data_loader['calib']['extrinsic']['R']['cols']))
         self.T = np.array(data_loader['calib']['extrinsic']['T']['data']).reshape(
             (data_loader['calib']['extrinsic']['T']['rows'], data_loader['calib']['extrinsic']['T']['cols']))
-        # 激光雷达到相机的外参矩阵，4*4的矩阵，前三列为旋转矩阵，第四列为平移矩阵
+        # 构建外参矩阵，4*4的矩阵，激光雷达到相机的外参矩阵
         self.extrinsic_matrix = np.hstack((self.R, self.T))
         self.extrinsic_matrix = np.vstack((self.extrinsic_matrix, [0, 0, 0, 1]))
-        # 相机到激光雷达的外参矩阵，4*4的矩阵，前三列为旋转矩阵，第四列为平移矩阵
+        # 相机到激光雷达的变换矩阵（通过求逆得到）
         self.extrinsic_matrix_inv = np.linalg.inv(self.extrinsic_matrix)
         
         
@@ -103,9 +104,10 @@ class Radar(Node):
         self.tf_buffer = Buffer()  # 创建 TF 缓冲区
         self.tf_listener = TransformListener(self.tf_buffer, self)  # 创建监听器
         self.timer = self.create_timer(1.0, self.on_timer)  # 定时查询 TF
-        self.radar_to_field = np.ones((4, 4))
-        self.radar_to_field_inv = np.ones((4, 4))
+        self.radar_to_field = np.ones((4, 4)) # 激光雷达到赛场的tf矩阵
+        self.radar_to_field_inv = np.ones((4, 4)) # 激光雷达到赛场的tf矩阵的逆（用于将点云转换回雷达坐标系）
     
+    # 定时查询 TF
     def on_timer(self):
         try:
             transform: TransformStamped = self.tf_buffer.lookup_transform(
@@ -125,6 +127,7 @@ class Radar(Node):
             self.radar_to_field = np.ones((4, 4))
             self.get_logger().error(f"获取 TF 失败: {ex}")    
     
+    # 将 TF 转换为 4x4 齐次变换矩阵
     def tf_to_matrix(self, translation, rotation):
         # 四元数转旋转矩阵
         q = np.array([rotation.x, rotation.y, rotation.z, rotation.w])
@@ -144,12 +147,13 @@ class Radar(Node):
             [2*(x*z - y*w),     2*(y*z + x*w),     1 - 2*(x**2 + y**2)]
         ])
     
-    def camera_to_lidar(self,pc):
-        pc = np.hstack((pc, np.ones((pc.shape[0], 1))))
-        # 将相机坐标系下的点云转换到雷达坐标系下
-        ret = np.dot(pc, self.extrinsic_matrix)
-        ret = ret[:, :3]
+    # 将相机坐标系下的点云转换到激光雷达坐标系
+    def camera_to_lidar(self, pc):
+        pc = np.hstack((pc, np.ones((pc.shape[0], 1)))) # 齐次化
+        ret = np.dot(pc, self.extrinsic_matrix) # 矩阵变换
+        ret = ret[:, :3] # 去齐次化
         return ret
+    # 点云回调函数
     def pcd_callback(self, msg):
         '''
         子线程函数，对于/livox/lidar topic数据的处理 , data是传入的
@@ -165,6 +169,7 @@ class Radar(Node):
         self.lidar_points = points.copy()
         # self.converter.lidar_to_field(points)
 
+    # 去除地面点云，将点云转换到赛场坐标系，过滤 Z 值，发布去除地面后的点云
     def remove_ground_points(self, pcd):
         if self.radar_to_field is None:
             self.get_logger().info("radar_to_field is None, skip removing process")
@@ -197,6 +202,7 @@ class Radar(Node):
         filtered_pcd = o3d.geometry.PointCloud()
         filtered_pcd.points = o3d.utility.Vector3dVector(filtered_points)
 
+        # 发布点云数据
         header = Header()
         header.stamp = self.get_clock().now().to_msg()
         header.frame_id = "livox"
@@ -207,12 +213,14 @@ class Radar(Node):
                     pc2.PointField(name='z', offset=8, datatype=pc2.PointField.FLOAT32, count=1),
                 ]
         pc = pc2.create_cloud(header, fields, field_pts)
+        # pc = pc2.create_cloud(header, fields, filtered_points) -> 实际效果不好，所以实际输入的是field_pts
         self.pub_nognd.publish(pc)
         
         # 可视化过滤后点云
         # o3d.visualization.draw_geometries([filtered_pcd])
         return filtered_pcd
     
+    # 雷达回调函数
     def radar_callback(self, msg):
         detect_results = msg.detect_results
         if self.lidar_points is None:
@@ -234,13 +242,14 @@ class Radar(Node):
             return
         # 检测框对应点云
         box_pcd = o3d.geometry.PointCloud()
-        # 对每个结果进行分析 , 进行目标定位
+        # 遍历所有检测结果
         for detect_result in detect_results:
             # self.get_logger().info('I heard: "%s"' % detect_result)
             sg_result = detect_result
+            # 获取检测框信息
             xyxy_box, xywh_box ,  track_id , label = sg_result.xyxy_box, sg_result.xywh_box, sg_result.track_id, sg_result.label
             # self.get_logger().info('I heard: "%s"' % xyxy_box)
-            # 如果没有分类出是什么车，或者是己方车辆，直接跳过
+            # 过滤无效和己方车辆
             if label == "NULL":
                 continue
             if self.global_my_color == "Red" and self.carList.get_car_id(label) < 100 and self.carList.get_car_id(label) != 7:
@@ -261,12 +270,11 @@ class Radar(Node):
                 self.get_logger().info("box_pc is None")
                 continue
             box_pcd.points = o3d.utility.Vector3dVector(box_pc)
-            # 点云过滤
-            box_pcd = self.converter.filter(box_pcd)
-            # 获取box_pcd的中心点
+            box_pcd = self.converter.filter(box_pcd) # 过滤点云，去除离检测框太远的点
+            # 聚类，获取box_pcd的中心点
             cluster_result = self.converter.cluster(box_pcd) # 也就6帧变7帧，还是启用
             _, center = cluster_result
-            # # 如果聚类结果为空，则用中值取点
+            # 如果聚类结果为空，则用中值取点
             if center[0] == 0 and center[1] == 0 and center[2] == 0:
                 center = self.converter.get_center_mid_distance(box_pcd)
             # 计算距离
@@ -274,16 +282,20 @@ class Radar(Node):
             if distance == 0:
                 continue
 
+            # 多坐标系转换
             # print((self.camera_to_lidar((center))))
-            center = np.hstack((center, np.array((1))))
+            # 相机坐标系 → 雷达坐标系
+            center = np.hstack((center, np.array((1)))) # 齐次化
             center = center[:3]
-            center = np.hstack((center, np.array((1))))
-            lidar_center = np.dot(center, self.extrinsic_matrix)
+            center = np.hstack((center, np.array((1)))) # ❓为什么要齐次化两次？
+            lidar_center = np.dot(center, self.extrinsic_matrix) # 使用外参矩阵进行转换
             lidar_center = lidar_center[:3]
             self.get_logger().info("lidar_center: {}".format(lidar_center))
             # self.get_logger().info("center: {}".format(center))
+
+            # 雷达坐标系 → 赛场坐标系  
             lidar_center = np.hstack((lidar_center, np.array((1))))
-            field_xyz = np.dot(self.radar_to_field, lidar_center)
+            field_xyz = np.dot(self.radar_to_field, lidar_center) # 使用重定位TF进行转换
             field_xyz = field_xyz[:3]
             self.get_logger().info("field_xyz: {}".format(field_xyz))
             # 将点转到赛场坐标系下
