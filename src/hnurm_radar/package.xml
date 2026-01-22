@@ -8,6 +8,9 @@
   <license>TODO: License declaration</license>
 
   <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>pcl_conversions</depend>
+  <depend>livox_ros_driver2</depend>
 
   <depend>example_interfaces</depend>
   <buildtool_depend>ament_python</buildtool_depend>
