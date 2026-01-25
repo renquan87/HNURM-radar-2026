@@ -8,3 +8,6 @@ MvFGSdkLog/
 target.xyz
 map.pcd
 normalized_map.pcd
+pcds.pcd
+.gitignore
+pcds_downsampled.pcd

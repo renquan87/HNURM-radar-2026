@@ -19,7 +19,9 @@ def generate_launch_description():
             package='registration',
             executable='registration_node',
             output='screen',
-            parameters=[params_file]
+            parameters=[
+                params_file
+            ]
         ),
         Node(
             package='rviz2',

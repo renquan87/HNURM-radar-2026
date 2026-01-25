@@ -10,9 +10,10 @@ RelocaliztionNode::RelocaliztionNode(const rclcpp::NodeOptions &options)
   // params declaration
   pointcloud_sub_topic_ = this->declare_parameter("pointcloud_sub_topic","/cloud_registered"); 
   pcd_file_ = this->declare_parameter("pcd_file","/home/rm/unit_test/ws/src/target.pcd");
+  RCLCPP_INFO(get_logger(), "%s", pcd_file_.c_str());
   generate_downsampled_pcd_  = this->declare_parameter("generate_downsampled_pcd",false); 
   downsampled_pcd_file_ = this->declare_parameter("downsampled_pcd_file","/home/rm/unit_test/ws/src/target.pcd");
-
+  RCLCPP_INFO(get_logger(), "%s", downsampled_pcd_file_.c_str());
   num_threads_ = this->declare_parameter("num_threads",4);
   num_neighbors_ = this->declare_parameter("num_neighbors",20);
   max_dist_sq_ = this->declare_parameter("max_dist_sq",1.0);
