@@ -812,7 +812,7 @@ class JudgeMessager(Node):
             depth=3
         )
         # 读取配置信息
-        self.cfg = YAML().load(open("/home/rq/radar/hnurm_radar/configs/main_config.yaml", encoding='Utf-8', mode='r'))
+        self.cfg = YAML().load(open("/data/projects/radar/hnurm_radar/configs/main_config.yaml", encoding='Utf-8', mode='r'))
         self.my_color = self.cfg['global']['my_color']
         self.get_logger().info(f"my color is {self.my_color}")
         self.serial_lock = threading.Lock()

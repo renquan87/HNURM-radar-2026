@@ -18,7 +18,7 @@ class DisplayPanel(Node):
             depth=3
         )
         self.locations = Locations()
-        self.map = cv2.imread('std_map.png')
+        self.map = cv2.imread('/data/projects/radar/hnurm_radar/map/std_map.png')
         
         self.sub_location = self.create_subscription(Locations, "/ekf_location_filtered", self.location_callback, qos_profile)
         # 创建一个锁

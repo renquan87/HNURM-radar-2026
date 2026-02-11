@@ -1,0 +1,818 @@
+"""
+camera_detector.py — 纯相机透视变换雷达站检测节点
+功能：调用海康工业相机，使用 YOLO 识别赛场地面机器人，
+      通过透视变换（Homography）将图像像素坐标映射到赛场坐标，
+      并将坐标在小地图中实时显示。
+
+与已有代码（相机+激光雷达方案）的区别：
+  - 不依赖激光雷达点云和外参矩阵
+  - 不依赖 ICP / TF 重定位
+  - 使用 4 组以上「图像像素 ↔ 赛场坐标」对应点计算单应性矩阵（Homography）
+  - 检测到机器人后取包围框底部中心点，通过透视变换直接得到赛场 (x, y)
+"""
+
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from detect_result.msg import Location, Locations
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+from ruamel.yaml import YAML
+
+# from .Camera.HKCam import *  # 使用海康工业相机时取消注释
+from .Car.Car import CarList
+from .camera_locator.anchor import Anchor
+from .camera_locator.point_picker import PointsPicker
+from .filters.kalman_filter import KalmanFilterWrapper
+
+import cv2
+import numpy as np
+import threading
+import time
+import math
+import sys
+import os
+import json
+from collections import deque
+from ultralytics import YOLO
+
+
+# ======================== 配置路径 ========================
+MAIN_CONFIG_PATH = "/data/projects/radar/hnurm_radar/configs/main_config.yaml"
+DETECTOR_CONFIG_PATH = "/data/projects/radar/hnurm_radar/configs/detector_config.yaml"
+# 透视变换标定文件（首次运行会自动生成）
+PERSPECTIVE_CALIB_PATH = "/data/projects/radar/hnurm_radar/configs/perspective_calib.json"
+# 地图图片（当前使用 PFA 2025 赛季地图，后续替换为 2026 赛季地图）
+MAP_IMAGE_PATH = "/data/projects/radar/hnurm_radar/map/pfa_map_2025.jpg"
+# 分区掩码图（PFA 2025 赛季掩码，后续用 make_mask 重新绘制 2026 版本）
+MASK_IMAGE_PATH = "/data/projects/radar/hnurm_radar/map/pfa_map_mask_2025.jpg"
+
+# ======================== 视频输入源 ========================
+# 现在通过 main_config.yaml 中的 camera_mode 配置项控制：
+#   'test'  — 测试模式，使用静态图片反复推理
+#   'video' — USB 摄像头 / 视频文件
+#   'hik'   — 海康工业相机
+
+
+class CameraDetector(Node):
+    """
+    纯相机透视变换雷达站节点
+    ──────────────────────
+    启动后流程：
+      1. 打开海康相机并持续读取图像
+      2. （首次/需要时）标定：用户在图像上选 4 个点，输入对应赛场坐标，
+         计算 Homography 矩阵并保存
+      3. YOLO 三阶段推理（复用已有 detector_node 的逻辑）识别机器人
+      4. 取每个机器人检测框底部中心的像素坐标，通过 H 矩阵变换到赛场坐标
+      5. 将结果发布到 ROS2 话题 & 在小地图窗口中实时绘制
+    """
+
+    def __init__(self):
+        super().__init__('camera_detector')
+        self.get_logger().info("CameraDetector 节点启动 ...")
+
+        # ---------- 加载配置 ----------
+        self.main_cfg = YAML().load(
+            open(MAIN_CONFIG_PATH, encoding='Utf-8', mode='r'))
+        self.det_cfg = YAML().load(
+            open(DETECTOR_CONFIG_PATH, encoding='Utf-8', mode='r'))
+
+        self.my_color = self.main_cfg['global']['my_color']
+        self.is_debug = self.main_cfg['global']['is_debug']
+        self.bridge = CvBridge()
+
+        # ---------- 初始化 CarList ----------
+        self.carList = CarList(self.main_cfg)
+
+        # ---------- 加载 YOLO 模型 ----------
+        self.get_logger().info('正在加载 YOLO 模型 ...')
+        self.model_car = YOLO(self.det_cfg['path']['stage_one_path'], task="detect")
+        self.model_car.overrides['imgsz'] = 1280
+        self.model_car2 = YOLO(self.det_cfg['path']['stage_two_path'])
+        self.model_car2.overrides['imgsz'] = 256
+        self.model_car3 = YOLO(self.det_cfg['path']['stage_three_path'])
+        self.model_car3.overrides['imgsz'] = 256
+        self.get_logger().info('YOLO 模型加载完毕。')
+
+        self.tracker_path = self.det_cfg['path']['tracker_path']
+        self.stage_one_conf = self.det_cfg['params']['stage_one_conf']
+        self.stage_two_conf = self.det_cfg['params']['stage_two_conf']
+        self.stage_three_conf = self.det_cfg['params']['stage_three_conf']
+        self.life_time = self.det_cfg['params']['life_time']
+        self.labels = self.det_cfg['params']['labels']
+        self.class_num = len(self.labels)
+
+        # 追踪器投票表
+        self.Track_value = {}
+        self.Status = [0] * 10000
+        for i in range(10000):
+            self.Track_value[i] = [0] * self.class_num
+        self.id_candidate = [0] * 10000
+        self.loop_times = 0
+
+        # 灰色装甲板映射（与 detector_node 一致）
+        self.Gray2Blue = {12: 5, 13: 1, 14: 0, 15: 3, 16: 2, 17: 4}
+        self.Gray2Red = {12: 11, 13: 7, 14: 6, 15: 9, 16: 8, 17: 10}
+        self.gray2gray = {0: 14, 1: 13, 2: 16, 3: 15, 4: 17, 5: 12}
+        self.Blue2Gray = {v: k for k, v in self.Gray2Blue.items()}
+        self.Red2Gray = {v: k for k, v in self.Gray2Red.items()}
+
+        # ---------- QoS ----------
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=3
+        )
+
+        # ---------- ROS2 发布 ----------
+        self.pub_location = self.create_publisher(Locations, "location", qos_profile)
+        self.pub_detect_view = self.create_publisher(Image, 'detect_view', qos_profile)
+
+        # ---------- 视频输入源（根据配置选择模式） ----------
+        self.frame = None
+        self._frame_lock = threading.Lock()
+        self.use_hkcam = False
+        self.video_cap = None
+        self.cam = None
+        self.test_image = None  # test 模式下的静态图片
+
+        camera_cfg = self.main_cfg.get('camera', {})
+        self.camera_mode = camera_cfg.get('mode', 'video')
+        video_source = camera_cfg.get('video_source', 0)
+        test_img_path = camera_cfg.get('test_image',
+            '/data/projects/radar/hnurm_radar/test_resources/pfa_test_image.jpg')
+
+        if self.camera_mode == 'test':
+            # ====== 测试模式：使用静态图片反复推理 ======
+            self.test_image = cv2.imread(test_img_path)
+            if self.test_image is None:
+                self.get_logger().error(f"测试图片无法加载: {test_img_path}")
+            else:
+                self.get_logger().info(f"测试模式：使用静态图片 {test_img_path} "
+                                       f"({self.test_image.shape[1]}×{self.test_image.shape[0]})")
+        elif self.camera_mode == 'hik':
+            # ====== 海康工业相机（比赛时使用） ======
+            try:
+                from .Camera.HKCam import HKCam
+                self.cam = HKCam(0)
+                self.use_hkcam = True
+                self.get_logger().info("使用海康工业相机 (HKCam)")
+            except Exception as e:
+                self.get_logger().error(f"海康相机初始化失败: {e}，回退到测试模式")
+                self.camera_mode = 'test'
+                self.test_image = cv2.imread(test_img_path)
+        else:
+            # ====== video 模式：USB 摄像头 / 视频文件 ======
+            self.video_cap = cv2.VideoCapture(video_source)
+            if not self.video_cap.isOpened():
+                self.get_logger().error(
+                    f"无法打开视频源: {video_source}，回退到测试模式")
+                self.camera_mode = 'test'
+                self.test_image = cv2.imread(test_img_path)
+            else:
+                src_name = (f"USB 摄像头 {video_source}"
+                            if isinstance(video_source, int) else video_source)
+                self.get_logger().info(f"使用视频源: {src_name}")
+
+        # ---------- 透视变换矩阵（多层） ----------
+        self.H_ground = None    # 地面层 Homography
+        self.H_highland = None  # 高地层 Homography
+        self.H = None           # 兼容：默认指向地面层
+        self.mask_img = None    # 分区掩码图
+        self._load_or_calibrate_homography()
+        self._load_mask()
+
+        # ---------- 坐标卡尔曼滤波器 ----------
+        filter_cfg = self.det_cfg.get('filter', {})
+        self.kf_wrapper = KalmanFilterWrapper(
+            process_noise=float(filter_cfg.get('process_noise', 1e-2)),
+            measurement_noise=float(filter_cfg.get('measurement_noise', 1e-1)),
+            jump_threshold=float(filter_cfg.get('jump_threshold', 3.0)),
+            max_inactive_time=float(filter_cfg.get('max_inactive_time', 3.0)),
+        )
+        self._cleanup_counter = 0
+
+        # ---------- 小地图 ----------
+        self.map_img = cv2.imread(MAP_IMAGE_PATH)
+        if self.map_img is None:
+            self.get_logger().warn(f"无法读取地图图片: {MAP_IMAGE_PATH}，将使用纯色底图")
+            self.map_img = np.zeros((1500, 2800, 3), dtype=np.uint8)
+
+        # ---------- 启动线程 ----------
+        self.frame_thread = threading.Thread(target=self._sync_frame, daemon=True)
+        self.frame_thread.start()
+
+        self.infer_thread = threading.Thread(target=self._infer_loop, daemon=True)
+        self.infer_thread.start()
+
+        self.get_logger().info("CameraDetector 初始化完成。")
+
+    # ================================================================
+    #  透视变换标定
+    # ================================================================
+    def _load_or_calibrate_homography(self):
+        """尝试从文件加载 Homography（支持多层），若不存在则启动交互式标定"""
+        if os.path.exists(PERSPECTIVE_CALIB_PATH):
+            self.get_logger().info(f"从 {PERSPECTIVE_CALIB_PATH} 加载透视变换标定 ...")
+            with open(PERSPECTIVE_CALIB_PATH, 'r') as f:
+                data = json.load(f)
+            # 兼容旧格式（单层 H）和新格式（H_ground + H_highland）
+            if 'H_ground' in data:
+                self.H_ground = np.array(data['H_ground'], dtype=np.float64)
+                self.get_logger().info("地面层透视变换矩阵加载成功。")
+            if 'H_highland' in data:
+                self.H_highland = np.array(data['H_highland'], dtype=np.float64)
+                self.get_logger().info("高地层透视变换矩阵加载成功。")
+            if 'H' in data and self.H_ground is None:
+                # 旧格式兼容：只有单个 H，作为地面层使用
+                self.H_ground = np.array(data['H'], dtype=np.float64)
+                self.get_logger().info("兼容旧格式：单层 H 作为地面层矩阵。")
+            self.H = self.H_ground  # 默认指向地面层
+        else:
+            self.get_logger().info("未找到透视变换标定文件，进入交互式标定 ...")
+            self._interactive_calibrate()
+
+    def _load_mask(self):
+        """加载分区掩码图（黑色=地面，非黑色=高地）"""
+        if os.path.exists(MASK_IMAGE_PATH):
+            self.mask_img = cv2.imread(MASK_IMAGE_PATH)
+            if self.mask_img is not None:
+                h, w = self.mask_img.shape[:2]
+                # PFA 的掩码是竖置 (2800×1500)，需要旋转为横置 (1500×2800)
+                # 横置约定：W=2800 对应赛场 28m (x轴), H=1500 对应 15m (y轴)
+                if h > w:  # 竖置，需要旋转
+                    self.mask_img = cv2.rotate(self.mask_img, cv2.ROTATE_90_CLOCKWISE)
+                    self.get_logger().info(
+                        f"掩码图为竖置({h}×{w})，已自动旋转为横置"
+                        f"({self.mask_img.shape[0]}×{self.mask_img.shape[1]})")
+                self.get_logger().info(f"分区掩码已加载: {MASK_IMAGE_PATH}")
+            else:
+                self.get_logger().warn(f"无法读取掩码图: {MASK_IMAGE_PATH}，将仅使用地面层")
+        else:
+            self.get_logger().info("未找到分区掩码图，将仅使用地面层透视变换。"
+                                   f"（可使用 make_mask 工具生成: {MASK_IMAGE_PATH}）")
+
+    def _interactive_calibrate(self):
+        """
+        交互式标定：提示用户运行独立的 GUI 标定工具。
+        不再在 camera_detector 节点内做标定，避免阻塞 ROS2 节点。
+        """
+        self.get_logger().error(
+            "═" * 60 + "\n"
+            "  未找到透视变换标定文件！\n"
+            f"  需要的文件: {PERSPECTIVE_CALIB_PATH}\n"
+            "\n"
+            "  请先运行 GUI 标定工具进行标定：\n"
+            "    ros2 run hnurm_radar perspective_calibrator\n"
+            "\n"
+            "  标定完成后重新启动 camera_detector。\n"
+            + "═" * 60
+        )
+        self.get_logger().info("节点将以无标定模式继续运行（坐标映射不可用）。")
+
+    def recalibrate(self):
+        """重新标定（可在运行时调用）"""
+        if os.path.exists(PERSPECTIVE_CALIB_PATH):
+            os.remove(PERSPECTIVE_CALIB_PATH)
+        self.H_ground = None
+        self.H_highland = None
+        self.H = None
+        self._interactive_calibrate()
+
+    # ================================================================
+    #  透视变换：像素 → 赛场坐标
+    # ================================================================
+    def pixel_to_field(self, px, py):
+        """
+        将图像像素坐标 (px, py) 通过多层 Homography 变换到赛场坐标 (fx, fy)。
+
+        流程:
+          1. 先用地面层矩阵做一次变换得到初始赛场坐标
+          2. 将赛场坐标映射到掩码图像素位置，查掩码颜色
+          3. 若掩码为黑色（地面）→ 使用地面层结果
+             若掩码为非黑色（高地）且高地层矩阵存在 → 用高地层矩阵重新变换
+
+        参数:
+            px, py: 原始分辨率下的像素坐标
+        返回:
+            (field_x, field_y): 赛场坐标（单位 m），若变换失败返回 None
+        """
+        if self.H_ground is None:
+            return None
+
+        pt = np.array([[[px, py]]], dtype=np.float64)
+
+        # Step 1: 地面层变换
+        transformed = cv2.perspectiveTransform(pt, self.H_ground)
+        fx = transformed[0][0][0]
+        fy = transformed[0][0][1]
+
+        # Step 2: 查掩码判定高度层
+        if self.mask_img is not None and self.H_highland is not None:
+            # 赛场坐标 → 掩码图像素 (100 px/m, 2800×1500)
+            mask_h, mask_w = self.mask_img.shape[:2]
+            mx = int(fx * mask_w / 28.0)
+            my = int(mask_h - fy * mask_h / 15.0)  # y 轴翻转
+            mx = max(0, min(mx, mask_w - 1))
+            my = max(0, min(my, mask_h - 1))
+
+            pixel_color = self.mask_img[my, mx]
+            is_highland = not (pixel_color[0] == 0 and
+                               pixel_color[1] == 0 and
+                               pixel_color[2] == 0)
+
+            if is_highland:
+                # Step 3: 用高地层矩阵重新变换
+                transformed_h = cv2.perspectiveTransform(pt, self.H_highland)
+                fx = transformed_h[0][0][0]
+                fy = transformed_h[0][0][1]
+
+        return (fx, fy)
+
+    def get_box_bottom_center(self, xyxy_box):
+        """
+        从检测框 [x1, y1, x2, y2] 中取底部中心点的像素坐标。
+        底部中心更接近地面，透视变换精度更高。
+        """
+        x1, y1, x2, y2 = xyxy_box
+        cx = (x1 + x2) / 2.0
+        cy = y2  # 底部
+        return cx, cy
+
+    # ================================================================
+    #  相机图像同步
+    # ================================================================
+    def _sync_frame(self):
+        """持续从视频源获取图像（支持 test/video/hik 三种模式）"""
+        while rclpy.ok():
+            cam_frame = None
+
+            if self.camera_mode == 'test':
+                # 测试模式：反复使用同一张图片
+                if self.test_image is not None:
+                    cam_frame = self.test_image.copy()
+                time.sleep(0.05)  # 模拟 ~20fps
+
+            elif self.camera_mode == 'hik' and self.use_hkcam and self.cam is not None:
+                # 海康工业相机
+                cam_frame = self.cam.getFrame()
+
+            elif self.video_cap is not None and self.video_cap.isOpened():
+                # USB 摄像头 / 视频文件
+                ret, cam_frame = self.video_cap.read()
+                if not ret:
+                    # 视频播放完毕，循环播放
+                    self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ret, cam_frame = self.video_cap.read()
+                    if not ret:
+                        cam_frame = None
+
+            if cam_frame is not None:
+                with self._frame_lock:
+                    self.frame = cam_frame.copy()
+            else:
+                time.sleep(0.03)  # 没有画面时短暂等待
+
+    def _get_frame(self):
+        with self._frame_lock:
+            if self.frame is None:
+                return None
+            return self.frame.copy()
+
+    # ================================================================
+    #  YOLO 推理（复用已有 detector_node 的三阶段逻辑）
+    # ================================================================
+    def _is_results_empty(self, results):
+        if results is None:
+            return True
+        if results[0].boxes.id is None:
+            return True
+        return False
+
+    def _parse_results(self, results):
+        confidences = results[0].boxes.conf.cpu().numpy()
+        boxes = results[0].boxes.xywh.cpu().numpy()
+        track_ids = results[0].boxes.id.int().cpu().tolist()
+        return confidences, boxes, track_ids
+
+    def _track_infer(self, frame):
+        results = self.model_car.track(
+            frame, persist=True, tracker=self.tracker_path, verbose=False)
+        return results
+
+    def _classify_infer(self, roi_list):
+        """二/三阶段分类推理"""
+        results = []
+        gray_results = []
+        for roi in roi_list:
+            results.extend(self.model_car2.predict(
+                roi, conf=self.stage_two_conf, device=0, verbose=False))
+            gray_results.extend(self.model_car3.predict(
+                roi, device=0, verbose=False))
+
+        if len(results) == 0:
+            return -1
+
+        label_list = []
+        conf_list = []
+        for result, gray_result, roi in zip(results, gray_results, roi_list):
+            roi_gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            data = result.boxes.data
+            gray_data = gray_result.boxes.data
+            maxConf = 0
+            maxGrayConf = 0
+            label = -1
+            gray_label = -1
+            gray_tmp = []
+            tmp = []
+
+            for i in range(len(gray_data)):
+                if gray_data[i][4] > maxGrayConf:
+                    maxGrayConf = gray_data[i][4]
+                    gray_label = gray_data[i][5]
+                    gray_tmp = gray_data[i]
+
+            for i in range(len(data)):
+                if data[i][4] > maxConf:
+                    maxConf = data[i][4]
+                    label = data[i][5]
+                    tmp = data[i]
+
+            if len(tmp) != 0:
+                x1, y1, x2, y2 = tmp[:4]
+                gray_region = roi_gray[int(y1):int(y2), int(x1):int(x2)]
+                if label < 6 and gray_region.size > 0 and cv2.mean(gray_region)[0] < 35:
+                    label = self.Blue2Gray[int(label)]
+                elif label > 5 and gray_region.size > 0 and cv2.mean(gray_region)[0] < 15:
+                    label = self.Red2Gray[int(label)]
+            else:
+                if len(gray_tmp) != 0:
+                    x1, y1, x2, y2 = gray_tmp[:4]
+                    gray_region = roi_gray[int(y1):int(y2), int(x1):int(x2)]
+                    if gray_region.size > 0 and cv2.mean(gray_region)[0] < 30:
+                        label = self.gray2gray[int(gray_label)]
+
+            label_list.append(int(label))
+            conf_list.append(float(maxConf))
+        return label_list, conf_list
+
+    def _infer(self, frame):
+        """
+        三阶段推理（与 detector_node.infer 逻辑一致）
+        返回: (绘制后的图像, 结果列表)
+        结果列表中每个元素: [xyxy_box, xywh_box, track_id, label_str]
+        """
+        if frame is None:
+            return None, None
+        results = self._track_infer(frame)
+        if self._is_results_empty(results):
+            return frame, None
+
+        exist_armor = [-1] * (self.class_num + 6)
+        draw_candidate = []
+        confidences, boxes, track_ids = self._parse_results(results)
+        zip_results = []
+        roi_list = []
+        id_list = []
+        box_list = []
+
+        for box, track_id, conf in zip(boxes, track_ids, confidences):
+            if self.loop_times % self.life_time == 1:
+                for i in range(self.class_num):
+                    self.Track_value[int(track_id)][i] = math.floor(
+                        self.Track_value[int(track_id)][i] / 10)
+            x, y, w, h = box
+            x_left = x - w / 2
+            y_left = y - h / 2
+            roi = frame[int(y_left):int(y_left + h), int(x_left):int(x_left + w)]
+            if roi.size == 0:
+                continue
+            roi_list.append(roi)
+            id_list.append(track_id)
+            box_list.append(box)
+
+        if len(roi_list) == 0:
+            self.loop_times += 1
+            return frame, None
+
+        classify_result = self._classify_infer(roi_list)
+        if classify_result == -1:
+            self.loop_times += 1
+            return frame, None
+
+        label_list, conf_list = classify_result
+        index = 0
+        for i in range(len(roi_list)):
+            classify_label = label_list[i]
+            conf = conf_list[i]
+            track_id = id_list[i]
+            box = box_list[i]
+            x, y, w, h = box
+            status = 0
+
+            if classify_label != -1:
+                label = self.Track_value[int(track_id)].index(
+                    max(self.Track_value[int(track_id)]))
+                if classify_label > 11:  # Gray
+                    status = 1
+                    if self.Status[track_id] < 6:
+                        self.Status[track_id] += status
+                    if label < 6 and self.Gray2Blue.get(classify_label) == label:
+                        self.Track_value[int(track_id)][int(float(
+                            self.Gray2Blue[classify_label]))] += 0.5 + conf * 0.5
+                    elif label > 5 and self.Gray2Red.get(classify_label) == label:
+                        self.Track_value[int(track_id)][int(float(
+                            self.Gray2Red[classify_label]))] += 0.5 + conf * 0.5
+                    else:
+                        classify_label = -1
+                else:
+                    if self.Status[int(track_id)] > 0:
+                        self.Status[int(track_id)] -= 1
+                    if self.Status[int(track_id)] < 4:
+                        self.Status[int(track_id)] = 0
+                    self.Track_value[int(track_id)][int(float(
+                        classify_label))] += 0.5 + conf * 0.5
+
+            label = self.Track_value[int(track_id)].index(
+                max(self.Track_value[int(track_id)]))
+
+            # 判重
+            if label < len(exist_armor) and exist_armor[label] != -1:
+                old_id = exist_armor[label]
+                if self.Track_value[int(track_id)][label] < self.Track_value[int(old_id)][label]:
+                    self.Track_value[int(track_id)][label] = 0
+                    label = "NULL"
+                else:
+                    self.Track_value[int(old_id)][label] = 0
+                    old_id_index = self.id_candidate[old_id]
+                    if old_id_index < len(draw_candidate):
+                        draw_candidate[old_id_index][5] = "NULL"
+                    exist_armor[label] = track_id
+            else:
+                if label < len(exist_armor):
+                    exist_armor[label] = track_id
+
+            pd = self.Track_value[int(track_id)][0]
+            same = True
+            for j in range(self.class_num - 1):
+                if pd != self.Track_value[int(track_id)][j + 1]:
+                    same = False
+                    break
+            if not same and label != "NULL":
+                label = str(self.labels[label])
+            else:
+                label = "NULL"
+
+            x_left = int(x - w / 2)
+            y_left = int(y - h / 2)
+            x_right = int(x + w / 2)
+            y_right = int(y + h / 2)
+            xywh_box = [x, y, w, h]
+            xyxy_box = [x_left, y_left, x_right, y_right]
+            draw_candidate.append([track_id, x_left, y_left, x_right, y_right, label])
+            zip_results.append([xyxy_box, xywh_box, track_id, label])
+            self.id_candidate[track_id] = index
+            index += 1
+
+        # 在图像上画出检测结果
+        for box in draw_candidate:
+            tid, x1, y1, x2, y2, lbl = box
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 128, 0), 3)
+            cv2.putText(frame, lbl, (x1 - 10, y2 + 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 122), 2)
+            cv2.putText(frame, str(tid), (x2 + 5, y2 + 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 122), 2)
+
+        self.loop_times += 1
+        return frame, zip_results
+
+    # ================================================================
+    #  主推理循环
+    # ================================================================
+    def _infer_loop(self):
+        """主循环：推理 → 透视变换 → 发布位置 → 显示小地图"""
+        # 等待标定完成
+        while self.H_ground is None and rclpy.ok():
+            self.get_logger().warn("等待透视变换标定 ...")
+            time.sleep(1.0)
+
+        cv2.namedWindow("CameraDetector", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("CameraDetector", 1920, 1080)
+        cv2.namedWindow("MiniMap", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("MiniMap", 800, 471)
+
+        start_time = time.time()
+        # 推理用分辨率
+        INFER_W, INFER_H = 1920, 1080
+
+        while rclpy.ok():
+            now = time.time()
+            fps = 1.0 / max(now - start_time, 1e-6)
+            start_time = now
+
+            try:
+                cv_image = self._get_frame()
+                if cv_image is None:
+                    time.sleep(0.01)
+                    continue
+
+                # 动态获取原始图像分辨率
+                ORIG_H, ORIG_W = cv_image.shape[:2]
+
+                # 缩放到推理分辨率
+                infer_image = cv2.resize(cv_image, (INFER_W, INFER_H))
+
+                # 推理
+                result_img, results = self._infer(infer_image)
+
+                # ---------- 透视变换 + 发布 ----------
+                allLocation = Locations()
+                carList_results = []
+
+                if results is not None:
+                    for result in results:
+                        xyxy_box, xywh_box, track_id, label = result
+
+                        if label == "NULL":
+                            continue
+                        # 过滤己方车辆
+                        car_id = self.carList.get_car_id(label) if label != "NULL" else -1
+                        if car_id == -1:
+                            continue
+                        if self.my_color == "Red" and car_id < 100 and car_id != 7:
+                            continue
+                        if self.my_color == "Blue" and car_id > 100 and car_id != 107:
+                            continue
+
+                        # 将推理分辨率坐标还原到原始分辨率
+                        orig_xyxy = [
+                            int(xyxy_box[0] * ORIG_W / INFER_W),
+                            int(xyxy_box[1] * ORIG_H / INFER_H),
+                            int(xyxy_box[2] * ORIG_W / INFER_W),
+                            int(xyxy_box[3] * ORIG_H / INFER_H),
+                        ]
+
+                        # 取检测框底部中心
+                        px, py = self.get_box_bottom_center(orig_xyxy)
+
+                        # 透视变换得到赛场坐标
+                        field_coord = self.pixel_to_field(px, py)
+                        if field_coord is None:
+                            continue
+                        field_x, field_y = field_coord
+
+                        # 范围检查（赛场 28m × 15m）
+                        if not (0 <= field_x <= 28 and 0 <= field_y <= 15):
+                            if self.is_debug:
+                                self.get_logger().warn(
+                                    f"{label} 坐标超出范围: ({field_x:.2f}, {field_y:.2f})")
+                            # 仍然保留，但限定范围
+                            field_x = max(0, min(28, field_x))
+                            field_y = max(0, min(15, field_y))
+
+                        # ★ 卡尔曼滤波平滑坐标
+                        field_x, field_y = self.kf_wrapper.update(
+                            car_id, field_x, field_y)
+                        # 滤波后再次 clamp
+                        field_x = max(0.0, min(28.0, field_x))
+                        field_y = max(0.0, min(15.0, field_y))
+
+                        field_xyz = np.array([field_x, field_y, 0.0])
+
+                        if self.is_debug:
+                            self.get_logger().info(
+                                f"[{label}] px=({px:.0f},{py:.0f}) → field=({field_x:.2f},{field_y:.2f})")
+
+                        # 在推理图像上标注赛场坐标
+                        disp_x = int(xyxy_box[0])
+                        disp_y = int(xyxy_box[1]) - 10
+                        cv2.putText(result_img,
+                                    f"({field_x:.1f},{field_y:.1f})",
+                                    (disp_x, disp_y),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+
+                        # 组装 CarList 结果
+                        orig_xywh = [
+                            float(xywh_box[0] * ORIG_W / INFER_W),
+                            float(xywh_box[1] * ORIG_H / INFER_H),
+                            float(xywh_box[2] * ORIG_W / INFER_W),
+                            float(xywh_box[3] * ORIG_H / INFER_H),
+                        ]
+                        camera_xyz = np.array([0.0, 0.0, 0.0])  # 透视变换无3D相机坐标
+                        carList_results.append([
+                            track_id, car_id, orig_xywh, 1, camera_xyz, field_xyz
+                        ])
+
+                        # 发布 Location 消息
+                        loc = Location()
+                        loc.x = float(field_x)
+                        loc.y = float(field_y)
+                        loc.z = 0.0
+                        loc.id = car_id
+                        color = "Red" if car_id < 100 else "Blue"
+                        loc.label = color
+                        allLocation.locs.append(loc)
+
+                # 更新 CarList
+                if carList_results:
+                    self.carList.update_car_info(carList_results)
+                self.pub_location.publish(allLocation)
+
+                # ★ 定期清理超时的卡尔曼滤波器
+                self._cleanup_counter += 1
+                if self._cleanup_counter % 100 == 0:
+                    self.kf_wrapper.cleanup()
+
+                # ---------- 在推理图像上显示 FPS ----------
+                cv2.putText(result_img, f"FPS: {fps:.1f}", (20, 40),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 2)
+                cv2.imshow("CameraDetector", result_img)
+
+                # ---------- 小地图可视化 ----------
+                self._draw_minimap(allLocation)
+
+                cv2.waitKey(1)
+
+            except Exception as e:
+                self.get_logger().error(f"推理循环异常: {e}")
+                import traceback
+                traceback.print_exc()
+
+    # ================================================================
+    #  小地图可视化
+    # ================================================================
+    def _draw_minimap(self, locations):
+        """
+        在小地图上绘制机器人位置。
+        地图图片尺寸映射: 赛场 28m×15m → 图片 2800×1500 像素（100 px/m）
+
+        镜像逻辑：
+          - 地图默认为蓝方视角（蓝方在左 x=0，红方在右 x=28）
+          - 若 my_color == "Red"，则所有坐标做 180° 镜像，
+            使操作手始终看到己方基地在左下角
+          - 机器人颜色只影响绘制颜色，不影响位置
+        """
+        show_map = self.map_img.copy()
+        need_mirror = (self.my_color == 'Red')
+
+        for loc in locations.locs:
+            x = round(loc.x, 2)
+            y = round(loc.y, 2)
+
+            # 赛场坐标 → 地图像素
+            xx = int(x * 100)
+            yy = int(1500 - y * 100)
+
+            # 限制范围
+            xx = max(0, min(xx, 2800))
+            yy = max(0, min(yy, 1500))
+
+            if need_mirror:
+                # 红方操作手：整张地图 180° 镜像
+                map_xx = 2800 - xx
+                map_yy = 1500 - yy
+                disp_x = round(28 - x, 2)
+                disp_y = round(15 - y, 2)
+            else:
+                map_xx = xx
+                map_yy = yy
+                disp_x = x
+                disp_y = y
+
+            # 机器人颜色只决定绘制颜色
+            if loc.label == 'Red':
+                color = (0, 0, 255)
+            else:
+                color = (255, 0, 0)
+
+            # 绘制圆圈和编号
+            cv2.circle(show_map, (map_xx, map_yy), 60, color, 4)
+            cv2.putText(show_map, str(loc.id), (map_xx - 15, map_yy + 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 2, color, 4)
+            cv2.putText(show_map,
+                        f"{disp_x},{disp_y}",
+                        (map_xx, map_yy - 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 4)
+
+        cv2.imshow("MiniMap", show_map)
+
+    # ================================================================
+    #  析构
+    # ================================================================
+    def __del__(self):
+        self.get_logger().info('CameraDetector 节点正在销毁。')
+
+
+# ================================================================
+#  入口
+# ================================================================
+def main(args=None):
+    rclpy.init(args=args)
+    node = CameraDetector()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

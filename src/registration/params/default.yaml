@@ -5,9 +5,9 @@
     # ROS2话题，用于接收实时点云数据（源点云）
     pointcloud_sub_topic: "/lidar_pcds"
     # 预先录制好的点云地图文件路径（目标点云）
-    pcd_file: "/home/rq/radar/hnurm_radar/pcds.pcd"
+    pcd_file: "/data/projects/radar/hnurm_radar/pcds.pcd"
     # 降采样后用于配准的地图文件路径，以提高性能
-    downsampled_pcd_file: "/home/rq/radar/hnurm_radar/pcds_downsampled.pcd"
+    downsampled_pcd_file: "/data/projects/radar/hnurm_radar/pcds_downsampled.pcd"
     # 是否在启动时生成一次降采样地图。注意：正常配准时应设为 false
     generate_downsampled_pcd : false
     # 算法并行计算时使用的线程数，可设为CPU核心数

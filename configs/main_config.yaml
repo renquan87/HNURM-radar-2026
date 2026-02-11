@@ -3,6 +3,12 @@ global:
   my_color: "Blue" # "Blue"
   is_debug: True # False
 
+# 相机输入配置（仅用于纯相机透视变换方案 camera_detector）
+camera:
+  mode: "test"               # "test": 测试模式(静态图片) | "video": USB摄像头/视频文件 | "hik": 海康工业相机
+  video_source: 0             # video 模式下的输入源：0=USB摄像头, 或视频文件路径如 "/path/to/video.mp4"
+  test_image: "/data/projects/radar/hnurm_radar/test_resources/test1.png"  # test 模式下使用的图片路径
+
 
 car:
   life_span: 20 # 20帧若未刷新则认为不可信

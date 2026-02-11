@@ -45,8 +45,8 @@ class Radar(Node):
         self.bridge = CvBridge()
         # detector_config_path = "./configs/detector_config.yaml"
         # binocular_camera_cfg_path = "./configs/bin_cam_config.yaml"
-        main_config_path = "/home/rq/radar/hnurm_radar/configs/main_config.yaml"
-        converter_config_path = "/home/rq/radar/hnurm_radar/configs/converter_config.yaml"
+        main_config_path = "/data/projects/radar/hnurm_radar/configs/main_config.yaml"
+        converter_config_path = "/data/projects/radar/hnurm_radar/configs/converter_config.yaml"
         main_cfg = YAML().load(open(main_config_path, encoding='Utf-8', mode='r'))
         
         # 全局变量

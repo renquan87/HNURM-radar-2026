@@ -157,7 +157,7 @@ class LidarListener(Node):
 
 
 def main(args=None):
-    main_config_path = "/home/rq/radar/hnurm_radar/configs/main_config.yaml"
+    main_config_path = "/data/projects/radar/hnurm_radar/configs/main_config.yaml"
     main_cfg = YAML().load(open(main_config_path, encoding='Utf-8', mode='r'))
     rclpy.init(args=args)
     lidar = LidarListener(main_cfg)
