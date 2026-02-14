@@ -1,13 +1,56 @@
+# ========================
+# 构建产物（colcon / CMake）
+# ========================
 build/
-log/
 install/
+log/
+
+# 包内嵌套的构建产物
+src/*/build/
+src/*/install/
+src/*/log/
+src/hnurm_radar/build/
+src/hnurm_radar/install/
+src/hnurm_radar/log/
+
+# ========================
+# Python 缓存
+# ========================
 __pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+
+# ========================
+# 模型文件（体积大，不入库）
+# ========================
 *.engine
 *.onnx
-MvFGSdkLog/
+
+# ========================
+# 点云数据文件
+# ========================
+*.pcd
 target.xyz
-map.pcd
-normalized_map.pcd
-pcds.pcd
-.gitignore
-pcds_downsampled.pcd
+
+# ========================
+# 运行时生成
+# ========================
+MvFGSdkLog/
+record/
+
+# ========================
+# IDE / 编辑器
+# ========================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ========================
+# 系统文件
+# ========================
+.DS_Store
+Thumbs.db

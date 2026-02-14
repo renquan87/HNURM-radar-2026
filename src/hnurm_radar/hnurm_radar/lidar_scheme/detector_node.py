@@ -7,7 +7,7 @@ from ruamel.yaml import YAML
 from detect_result.msg import DetectResult
 from detect_result.msg import Robots
 from sensor_msgs.msg import Image
-from .Camera.HKCam import *
+from ..Camera.HKCam import *
 from cv_bridge import CvBridge
 import cv2
 import time

@@ -19,11 +19,11 @@ from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from ruamel.yaml import YAML
 
-# from .Camera.HKCam import *  # 使用海康工业相机时取消注释
-from .Car.Car import CarList
-from .camera_locator.anchor import Anchor
-from .camera_locator.point_picker import PointsPicker
-from .filters.kalman_filter import KalmanFilterWrapper
+# from ..Camera.HKCam import *  # 使用海康工业相机时取消注释
+from ..Car.Car import CarList
+from ..camera_locator.anchor import Anchor
+from ..camera_locator.point_picker import PointsPicker
+from ..filters.kalman_filter import KalmanFilterWrapper
 
 import cv2
 import numpy as np
@@ -153,7 +153,7 @@ class CameraDetector(Node):
         elif self.camera_mode == 'hik':
             # ====== 海康工业相机（比赛时使用） ======
             try:
-                from .Camera.HKCam import HKCam
+                from ..Camera.HKCam import HKCam
                 self.cam = HKCam(0)
                 self.use_hkcam = True
                 self.get_logger().info("使用海康工业相机 (HKCam)")
