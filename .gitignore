@@ -54,3 +54,5 @@ record/
 # ========================
 .DS_Store
 Thumbs.db
+docs/LEARNING_ROADMAP.md
+docs/FINAL_DOCUMENT_SUGGESTIONS.md
