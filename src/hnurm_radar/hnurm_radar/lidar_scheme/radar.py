@@ -1,3 +1,40 @@
+"""
+radar.py — 激光雷达方案的融合定位节点（方案二）
+
+功能：
+  订阅 detector_node 发布的 2D 检测结果（detect_result）和 lidar_node 发布的
+  累积点云（lidar_pcds），将 2D 检测框投影到 3D 点云中获取目标的三维位置，
+  再通过 TF 变换（来自 registration 节点的 ICP 配准结果）将坐标从激光雷达
+  坐标系转换到赛场坐标系，最终发布到 /location 话题。
+
+数据流：
+  detect_result (Robots)  ──┐
+                            ├→ radar_callback() → 点云投影 → 聚类 → 坐标变换 → /location (Locations)
+  lidar_pcds (PointCloud2) ─┘
+  TF (livox → map)        ──→ on_timer() 定时查询
+
+核心流程（radar_callback）：
+  1. 将累积点云从激光雷达坐标系转到相机坐标系（converter.lidar_to_camera）
+  2. 对每个检测框，提取框内点云（converter.get_points_in_box）
+  3. 统计滤波 + DBSCAN 聚类取最大簇中心（converter.filter + converter.cluster）
+  4. 相机坐标系 → 激光雷达坐标系（extrinsic_matrix 外参矩阵）
+  5. 激光雷达坐标系 → 赛场坐标系（radar_to_field TF 矩阵）
+  6. 更新 CarList 并发布 Locations 消息
+
+订阅话题：
+  - detect_result (Robots)      — 来自 detector_node 的检测框
+  - lidar_pcds   (PointCloud2)  — 来自 lidar_node 的累积点云
+  - TF (livox → map)            — 来自 registration 节点的配准变换
+
+发布话题：
+  - location    (Locations)     — 敌方机器人赛场坐标
+  - pcd_removed (PointCloud2)   — 去除地面后的点云（调试用）
+
+配置文件：
+  - configs/main_config.yaml      — 全局颜色、调试开关
+  - configs/converter_config.yaml — 外参 R/T、内参 K、畸变系数
+"""
+
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String

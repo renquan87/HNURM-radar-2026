@@ -1,3 +1,34 @@
+"""
+detector_node.py — 激光雷达方案的视觉检测节点（方案二）
+
+功能：
+  调用海康工业相机获取图像，使用 YOLO 三阶段推理识别赛场机器人，
+  将检测结果（bbox + track_id + 分类标签）通过 ROS2 话题发布给
+  下游的 radar_node 进行点云投影定位。
+
+三阶段推理流程：
+  Stage 1 — _track_infer():  全图目标检测 + ByteTrack 多目标追踪（stage_one.pt, imgsz=1280）
+  Stage 2 — classify_infer(): ROI 装甲板颜色+编号分类（stage_two.pt, imgsz=256）
+  Stage 3 — classify_infer(): ROI 灰色装甲板专用分类（stage_three.pt, imgsz=256）
+
+投票机制：
+  每个 track_id 维护一个长度为 class_num 的投票表 Track_value，
+  每帧分类结果按 (0.5 + conf * 0.5) 累加投票，每 life_time 帧衰减为 1/10，
+  最终取投票最高的类别作为该目标的标签。
+
+与 camera_detector（方案一）的区别：
+  - 本节点不做透视变换定位，仅输出 2D 检测框
+  - 定位由下游 radar_node 结合点云完成（3D 投影 + DBSCAN 聚类）
+  - 直接依赖海康工业相机硬件（HKCam），无 test/video 模式
+
+发布话题：
+  - detect_result (Robots)   — 所有检测到的机器人 bbox + 标签
+  - detect_view   (Image)    — 带标注的检测结果图像
+
+配置文件：
+  - configs/detector_config.yaml — 模型路径、置信度阈值、生命周期等
+"""
+
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String

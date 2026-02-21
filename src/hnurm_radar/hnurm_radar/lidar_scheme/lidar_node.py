@@ -1,4 +1,28 @@
-# 构建Lidar类，作为激光雷达接收类，构建一个ros节点持续订阅/livox/lidar话题，把点云信息写入PcdQueue,整个以子线程形式运行
+"""
+lidar_node.py — 激光雷达点云接收与预处理节点（方案二）
+
+功能：
+  订阅 Livox HAP 激光雷达驱动发布的 /livox/lidar 话题（PointCloud2），
+  对原始点云进行距离滤波（近距离 + 远距离剔除），将多帧点云累积到
+  PcdQueue 队列中，并以 ~100Hz 频率重新发布合并后的点云到 /lidar_pcds 话题，
+  供下游 registration 节点进行点云配准。
+
+数据流：
+  /livox/lidar (PointCloud2) → listener_callback() → PcdQueue(累积10帧)
+                                                        ↓
+  publish_point_cloud() → /lidar_pcds (PointCloud2) → registration 节点
+
+核心类：
+  - Pcd:           单帧点云的 Open3D 封装
+  - PcdQueue:      固定长度的点云队列，自动合并所有帧为一个 numpy 数组
+  - LidarListener: ROS2 节点，订阅点云 → 滤波 → 入队 → 发布
+
+配置参数（来自 configs/main_config.yaml → lidar 段）：
+  - height_threshold: 地面点高度阈值（当前未启用）
+  - min_distance:     近距离滤除阈值（m），默认 1
+  - max_distance:     远距离滤除阈值（m），默认 40
+  - lidar_topic_name: 点云话题名，默认 "/livox/lidar"
+"""
 
 import threading
 from std_msgs.msg import String

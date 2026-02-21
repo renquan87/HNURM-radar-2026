@@ -1,4 +1,30 @@
 # -- coding: utf-8 --
+"""
+HKCam.py — 海康工业相机驱动封装
+
+功能：
+  基于海康 MvCamera SDK（MvImport），封装工业相机的初始化、取流、
+  像素格式转换等操作，提供简洁的 getFrame() 接口供上层节点调用。
+
+适配型号：
+  CS060（BayerRG12 → BGR8 转换），修改像素格式可适配其他型号。
+
+初始化流程：
+  1. 枚举设备 → 按 cameraId 选择
+  2. 创建句柄 → 打开设备
+  3. 设置触发模式 OFF（连续采集）
+  4. 设置分辨率 3072×2048
+  5. 设置像素格式 BayerRG12（0x01100011）
+  6. 设置曝光时间 8000μs、增益 20dB
+  7. 开始取流
+
+主要方法：
+  - getFrame(): 获取一帧 BGR 图像（numpy ndarray, shape=[2048, 3072, 3]）
+  - __del__():  停止取流 → 关闭设备 → 销毁句柄
+
+依赖：
+  - MvImport/MvCameraControl_class — 海康 SDK Python 封装
+"""
 
 import sys
 import numpy as np

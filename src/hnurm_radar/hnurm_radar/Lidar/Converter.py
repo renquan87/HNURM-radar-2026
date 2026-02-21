@@ -1,42 +1,38 @@
-# 将激光雷达坐标系下的点云转换到相机坐标系下
-# 关于点云处理，过程中pcd可以变换，只要vis的时候更改pcd的points属性就可以了
-'''
-理论上坐标系之间轴的关系：
-激光雷达的x是相机坐标系的z，激光雷达的y是相机坐标系的-x，激光雷达的z是相机坐标系的-y
-'''
-# 外参矩阵R:
-'''
-   0.0092749    -0.999957  0.000449772
-  0.00118781 -0.000438773    -0.999999
-    0.999956   0.00927542   0.00118369
-'''
-# 举例：
-# 外参矩阵T:
-'''
-0.00529624
- 0.0306859
- -0.135507
-'''
-# 内参矩阵
-'''
-instrinsic
-1246.7920	0	637.8469
-0	1243.23027688354	506.5883
-0	0	1
-'''
-# 去畸变
-'''
-distortion
--0.100813 0.58183 0.0031347 0.00040115 0
-'''
-# open3的的pcd的pcd.points在np.asarray(pcd.points)的情况下格式是这样的
-'''
-array([[x1, y1, z1],
-       [x2, y2, z2],
-       [x3, y3, z3],
-       ...,
-       [xn, yn, zn]])
-'''
+"""
+Converter.py — 多坐标系转换与点云处理工具模块
+
+功能：
+  封装激光雷达、相机、图像、赛场四个坐标系之间的转换逻辑，
+  以及点云滤波、聚类、深度图生成等处理方法。是方案二（lidar_scheme）
+  中 radar.py 的核心依赖。
+
+坐标系关系（理论）：
+  激光雷达 X → 相机 Z
+  激光雷达 Y → 相机 -X
+  激光雷达 Z → 相机 -Y
+
+Converter 类主要方法：
+  - lidar_to_camera():       激光雷达 → 相机坐标系（外参矩阵 R|T）
+  - camera_to_image():       相机 → 图像像素坐标（内参矩阵 K）
+  - camera_to_field():       相机 → 赛场坐标系（solvePnP 求解）
+  - get_points_in_box():     提取 2D 检测框内的 3D 点云
+  - filter():                体素降采样 + 统计滤波
+  - cluster():               DBSCAN 聚类，返回最大簇中心
+  - generate_depth_map():    生成伪彩色深度图（调试用）
+  - get_center_mid_distance(): 取距离中值点作为目标中心
+
+ROISelector 类：
+  手动框选英雄梯高区 / 哨兵巡逻区的图像 ROI，
+  提供 is_point_in_xxx() 判断像素点是否在区域内。
+
+GPU 加速：
+  使用 CuPy 替代 NumPy 进行矩阵运算，提升大规模点云的处理速度。
+
+配置文件：
+  - configs/converter_config.yaml — 外参 R/T、内参 fx/fy/cx/cy、
+    畸变系数、聚类参数 eps/min_points、滤波参数等
+"""
+
 import os
 
 import cupy as cp
@@ -530,4 +526,3 @@ class ROISelector:
             return np.array([23.10,2.76,1])
         else:
             return np.array([5.22,13.20,1])
-

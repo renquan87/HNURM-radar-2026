@@ -1,3 +1,27 @@
+"""
+point_picker.py — 图像交互式标定点选取工具
+
+功能：
+  提供一个可缩放、可平移的 OpenCV 窗口，让用户在图像上手动点选
+  标定点（如赛场四角），将像素坐标存入 Anchor 对象。
+  用于 camera_scheme 方案中的透视变换标定（PnP 求解）。
+
+交互操作：
+  - 左键点击:     选取标定点，坐标存入 Anchor
+  - 右键拖拽:     平移图像视窗
+  - 滚轮上/下:    放大/缩小图像（1.0x ~ 4.0x）
+  - D 键:         删除最后一个选取的点
+  - Q 键:         确认完成，关闭窗口
+
+核心类：
+  - MySize:       简易的宽高封装，支持比较运算
+  - PointsPicker: 交互式点选器，管理缩放/平移/标注逻辑
+
+使用方式：
+  pp = PointsPicker()
+  pp.caller(image, anchor)  # 弹出窗口，选完后 anchor.vertexes 即为结果
+"""
+
 import cv2
 
 class MySize:

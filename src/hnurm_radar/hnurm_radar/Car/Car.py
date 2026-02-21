@@ -1,3 +1,32 @@
+"""
+Car.py — 车辆信息管理模块
+
+功能：
+  定义 Car 和 CarList 两个核心数据类，作为整个雷达站系统中
+  车辆状态信息的统一存储与读写中心。
+
+Car 类：
+  表示赛场上的单个机器人，维护以下信息：
+  - car_id:      车辆 ID（遵循裁判系统协议：R1-R5/R7=1-7, B1-B5/B7=101-107）
+  - track_id:    ByteTrack 追踪器分配的追踪编号
+  - image_xywh:  图像中的检测框（中心+宽高）
+  - camera_xyz:  相机坐标系下的 3D 位置
+  - field_xyz:   赛场坐标系下的 3D 位置
+  - life_span:   信息可信生命周期（每帧递减，归零则标记为不可信）
+
+CarList 类：
+  管理全部 12 辆机器人（红蓝各 6 辆）的 Car 实例，提供：
+  - update_car_info(): 每帧由检测节点批量写入检测结果
+  - get_all_info():    供 judge_messager / display_panel 读取
+  - get_map_info():    供小地图显示读取赛场坐标
+  - get_center_info(): 供哨兵决策读取图像坐标
+  内部使用 threading.Lock 保证多线程安全
+
+配置参数（来自 configs/main_config.yaml）：
+  - global.my_color:  我方颜色（"Red" / "Blue"）
+  - car.life_span:    车辆信息可信生命周期帧数
+"""
+
 # 定义Car类和CarList类
 import threading
 from ruamel.yaml import YAML
@@ -193,10 +222,3 @@ class CarList:
     # 由标签获取车ID，如输入"R1”，返回1
     def get_car_id(self , label):
         return self.label2ID[label]
-
-
-
-
-
-
-

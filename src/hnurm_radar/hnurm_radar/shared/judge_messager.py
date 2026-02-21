@@ -1,3 +1,25 @@
+"""
+judge_messager.py — 裁判系统串口通信节点
+
+功能：
+  - 通过 USB 转串口（/dev/ttyACM0）与 RoboMaster 裁判系统双向通信
+  - 发送：将检测到的 6 台敌方机器人赛场坐标（cmd_id=0x0305）以 150ms 周期发送给裁判系统
+  - 发送：触发双倍易伤效果（cmd_id=0x0301，子命令 0x0121）
+  - 接收：比赛剩余时间（0x0001）、敌方血量（0x0003）、标记进度（0x020C）、
+          双倍易伤状态（0x020E）、飞镖目标（0x0105）
+
+架构：
+  - JudgeMessager（ROS2 节点）：订阅 /ekf_location_filtered 话题获取滤波后坐标，
+    在 judge_loop 线程中周期性发送坐标和双倍易伤指令
+  - Receiver（独立进程 multiprocessing.Process）：阻塞式读取串口数据，
+    通过共享内存（Value/Array）将解析结果传递给主进程
+  - 帧格式遵循 RoboMaster 裁判系统协议 v1.4：
+    [SOF(0xA5) | data_length(2B) | seq(1B) | CRC8(1B)] [cmd_id(2B)] [data(nB)] [CRC16(2B)]
+
+入口：ros2 run hnurm_radar judge_messager
+配置：configs/main_config.yaml → global.my_color（决定己方 ID 和坐标镜像逻辑）
+"""
+
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String

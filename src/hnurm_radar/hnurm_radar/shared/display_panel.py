@@ -1,3 +1,22 @@
+"""
+display_panel.py — 小地图可视化面板节点
+
+功能：
+  订阅 EKF 滤波后的机器人位置信息（/ekf_location_filtered），
+  在标准赛场地图（std_map.png）上实时绘制敌我双方机器人位置，
+  以 ~15fps 刷新 OpenCV 窗口显示。
+
+坐标映射：
+  赛场坐标 (m) → 像素坐标：x_px = x * 100, y_px = 1500 - y * 100
+  红方坐标需做对称翻转（28-x, 15-y）以统一到蓝方视角
+
+订阅话题：
+  - /ekf_location_filtered (Locations) — EKF 滤波后的机器人位置
+
+依赖：
+  - map/std_map.png — 标准赛场底图（2800×1500 像素）
+"""
+
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Int32

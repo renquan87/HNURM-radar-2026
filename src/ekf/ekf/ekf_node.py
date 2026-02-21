@@ -1,4 +1,31 @@
 #!/usr/bin/env python3
+"""
+ekf_node.py — 扩展卡尔曼滤波（EKF）节点
+
+功能：
+  订阅检测节点发布的敌方机器人赛场坐标（location 话题），
+  对每辆敌方机器人独立运行 EKF 滤波，平滑位置并估计速度，
+  将滤波后的坐标通过 ekf_location_filtered 话题发布。
+
+数据流：
+  detector_node → [location] → ekf_node → [ekf_location_filtered] → judge_messager
+
+订阅话题：
+  - location (Locations) — 原始检测坐标
+
+发布话题：
+  - ekf_location_filtered (Locations) — 滤波后坐标
+
+核心逻辑：
+  - 维护 6 个独立的 RobotEKF 实例（对应敌方 6 辆机器人）
+  - 每 50ms 定时触发一次滤波步进
+  - 状态向量 [x, vx, y, vy]，观测向量同维
+  - 通过 RobotInfo 计算帧间速度和加速度，作为过程模型输入
+
+依赖：
+  - ekf.RobotEKF — 基于 tinyekf 的 EKF 实现
+  - detect_result.msg — Location / Locations 自定义消息
+"""
 
 import rclpy
 from rclpy.node import Node

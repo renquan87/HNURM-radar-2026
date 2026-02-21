@@ -1,3 +1,22 @@
+"""
+publish_video.py — 视频文件发布节点
+
+功能：
+  读取本地视频文件，以 ~60fps 的频率将每帧图像通过 ROS2 话题发布，
+  用于离线调试和回放测试（替代实际相机输入）。
+  视频播放完毕后自动循环。
+
+发布话题：
+  - image (Image) — BGR8 编码的视频帧
+
+参数：
+  - video_file (string) — 视频文件路径，通过 ROS2 参数传入
+
+使用场景：
+  配合 hnurm_radar_video_launch.py 启动，用于无硬件环境下的
+  camera_scheme 方案调试。
+"""
+
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
