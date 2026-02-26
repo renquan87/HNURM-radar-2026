@@ -834,7 +834,8 @@ class JudgeMessager(Node):
             depth=3
         )
         # 读取配置信息
-        self.cfg = YAML().load(open("/data/projects/radar/hnurm_radar/configs/main_config.yaml", encoding='Utf-8', mode='r'))
+        from .paths import MAIN_CONFIG_PATH
+        self.cfg = YAML().load(open(MAIN_CONFIG_PATH, encoding='Utf-8', mode='r'))
         self.my_color = self.cfg['global']['my_color']
         self.get_logger().info(f"my color is {self.my_color}")
         self.serial_lock = threading.Lock()
@@ -922,6 +923,9 @@ class JudgeMessager(Node):
             
             for i in range(len(cur_locations.locs)):
                 location = cur_locations.locs[i]
+                # 跳过 NULL 等无效 ID，避免 KeyError
+                if location.id not in robot_trans:
+                    continue
                 x = round(location.x, 2)
                 y = round(location.y, 2)
                 z = round(location.z, 2)

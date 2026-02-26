@@ -1,13 +1,33 @@
 
 global:
-  my_color: "Blue" # "Blue"
+  my_color: "Red" # "Blue"
   is_debug: True # False
+  scene: "lab"  # "competition" = 赛场（28x15m）| "lab" = 实验室测试
+
+# 场景配置：不同场景使用不同的地图和点云文件
+# 切换场景只需修改 global.scene，无需替换文件
+scenes:
+  competition:
+    std_map: "map/std_map.png"              # 方案二display_panel 底图
+    pfa_map: "map/pfa_map_2025.jpg"         # 方案一透视标定用地图
+    pcd_file: "data/pcds.pcd"               # 点云地图
+    downsampled_pcd: "data/pcds_downsampled.pcd"
+    field_width: 28.0                       # 赛场宽度(m)
+    field_height: 15.0                      # 赛场高度(m)
+  lab:
+    std_map: "map/lab_map_28x15.png"        # 实验室 display_panel 底图（裁剪后2800×1500）
+    std_map_grid: "map/lab_map_28x15_grid.png"  # 带坐标网格的版本（调试用）
+    pfa_map: "map/lab_map_28x15.png"        # 实验室透视标定用地图
+    pcd_file: "data/lab_pcds.pcd"           # 实验室点云地图
+    downsampled_pcd: "data/lab_pcds_downsampled.pcd"  # 实验室降采样点云地图
+    field_width: 28.0                       # 由标定工具自动更新
+    field_height: 15.0                      # 由标定工具自动更新
 
 # 相机输入配置（仅用于纯相机透视变换方案 camera_detector）
 camera:
   mode: "test"               # "test": 测试模式(静态图片) | "video": USB摄像头/视频文件 | "hik": 海康工业相机
   video_source: 0             # video 模式下的输入源：0=USB摄像头, 或视频文件路径如 "/path/to/video.mp4"
-  test_image: "/data/projects/radar/hnurm_radar/test_resources/test1.png"  # test 模式下使用的图片路径
+  test_image: "test_resources/test1.png"  # test 模式下使用的图片路径（相对于项目根目录）
 
 
 car:

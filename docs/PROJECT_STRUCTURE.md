@@ -179,7 +179,7 @@ src/hnurm_radar/
 | `bin_cam_config.yaml` | YAML | 双目相机配置（预留） |
 | `icp.rviz` | RViz | ICP 点云配准可视化配置 |
 
-**路径约定**：代码中使用绝对路径 `/data/projects/radar/hnurm_radar/` 引用配置文件。部署到其他路径时需修改相关引用。
+**路径约定**：代码中所有路径通过 `src/hnurm_radar/hnurm_radar/shared/paths.py` 基于项目根目录动态计算，配置文件使用相对路径，项目可部署到任意目录。
 
 ---
 

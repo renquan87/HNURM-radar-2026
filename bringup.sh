@@ -21,7 +21,8 @@ cmds=(
     #    "ros2 bag record /livox/lidar /detect_result /location  /ekf_location_filtered"
        )
        
-cd /data/projects/radar/hnurm_radar
+# 自动定位到脚本所在目录（即项目根目录）
+cd "$(dirname "$(readlink -f "$0")")"
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 

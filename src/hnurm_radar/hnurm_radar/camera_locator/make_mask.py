@@ -153,13 +153,32 @@ class MaskMaker:
 def main():
     parser = argparse.ArgumentParser(description="赛场分区掩码绘制工具")
     parser.add_argument("--map", type=str,
-                        default="/data/projects/radar/hnurm_radar/map/std_map.png",
+                        default=None,
                         help="赛场地图图片路径")
     parser.add_argument("--out", type=str,
-                        default="/data/projects/radar/hnurm_radar/map/map_mask.png",
+                        default=None,
                         help="输出掩码图片路径")
     args = parser.parse_args()
-    maker = MaskMaker(args.map, args.out)
+
+    # 使用 paths 模块提供默认值
+    map_path = args.map
+    out_path = args.out
+    if map_path is None or out_path is None:
+        try:
+            from ..shared.paths import STD_MAP_PATH, MAP_DIR
+            if map_path is None:
+                map_path = STD_MAP_PATH
+            if out_path is None:
+                out_path = os.path.join(MAP_DIR, "map_mask.png")
+        except ImportError:
+            # 直接运行时回退到相对路径
+            base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
+            if map_path is None:
+                map_path = os.path.join(base, "map", "std_map.png")
+            if out_path is None:
+                out_path = os.path.join(base, "map", "map_mask.png")
+
+    maker = MaskMaker(map_path, out_path)
     maker.run()
 
 

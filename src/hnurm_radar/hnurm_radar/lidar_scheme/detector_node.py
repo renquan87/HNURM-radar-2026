@@ -48,7 +48,8 @@ import sys
 import os
 from collections import deque
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, qos_profile_sensor_data
-sys.path.append(os.path.join("/data/projects/radar/hnurm_radar/src/hnurm_radar/"))
+from ..shared.paths import PROJECT_ROOT, DETECTOR_CONFIG_PATH, RECORD_DIR, ULTRALYTICS_DIR, resolve_path
+sys.path.append(ULTRALYTICS_DIR)
 from ultralytics import YOLO
 
 # 检测节点类
@@ -59,23 +60,23 @@ class Detector(Node):
         self.start_time = time.time()
         self.bridge = CvBridge()
         # 加载配置文件
-        self.cfg = YAML().load(open("/data/projects/radar/hnurm_radar/configs/detector_config.yaml", encoding='Utf-8', mode='r'))
+        self.cfg = YAML().load(open(DETECTOR_CONFIG_PATH, encoding='Utf-8', mode='r'))
         # 记录相关参数 flag and fps
         self.is_record = self.cfg['is_record']
         self.record_fps = self.cfg['record_fps']
         
         # 初始化并加载 3 个 YOLO 模型，分别用于：目标检测 → 目标分类 → 灰度/细分类
         self.get_logger().info('Loading Yolo models...')
-        self.model_car = YOLO(self.cfg['path']['stage_one_path'] , task = "detect")
+        self.model_car = YOLO(resolve_path(self.cfg['path']['stage_one_path']), task="detect")
         self.model_car.overrides['imgsz'] = 1280
-        self.model_car2 = YOLO(self.cfg['path']['stage_two_path'])
+        self.model_car2 = YOLO(resolve_path(self.cfg['path']['stage_two_path']))
         self.model_car2.overrides['imgsz'] = 256
-        self.model_car3 = YOLO(self.cfg['path']['stage_three_path'])
-        self.model_car3.overrides['imgsz']=256
+        self.model_car3 = YOLO(resolve_path(self.cfg['path']['stage_three_path']))
+        self.model_car3.overrides['imgsz'] = 256
         self.get_logger().info('Yolo models loaded.')
-        
+
         # 读取追踪器路径和各阶段 YOLO 的置信度阈值，设置目标生命周期，并初始化一个用于分配目标 ID 的缓存表
-        self.tracker_path = self.cfg['path']['tracker_path']
+        self.tracker_path = resolve_path(self.cfg['path']['tracker_path'])
         self.stage_one_conf = self.cfg['params']['stage_one_conf']
         self.stage_two_conf = self.cfg['params']['stage_two_conf']
         self.stage_three_conf = self.cfg['params']['stage_three_conf']
@@ -134,11 +135,12 @@ class Detector(Node):
         # 创建一个图像队列
         self.image_queue = deque(maxlen=10)
         self.timestamp_queue = deque(maxlen=10)
-        # 创建一个线程用于保存图像
+        # 创建一个线程用于保存图像，录制文件存放在 record/ 文件夹下
+        os.makedirs(RECORD_DIR, exist_ok=True)
         cur_date = time.strftime("%Y-%m-%d-%h-%s", time.localtime())
-        self.video_writer = cv2.VideoWriter("/data/projects/radar/hnurm_radar/record" + cur_date + ".avi", cv2.VideoWriter_fourcc(*'XVID'), 60, (3072, 2048))
+        self.video_writer = cv2.VideoWriter(os.path.join(RECORD_DIR, cur_date + ".avi"), cv2.VideoWriter_fourcc(*'XVID'), 60, (3072, 2048))
         # 打开文件用于保存时间戳
-        self.timestamp_file = open("/data/projects/radar/hnurm_radar/record" + cur_date + ".txt", "w")
+        self.timestamp_file = open(os.path.join(RECORD_DIR, cur_date + ".txt"), "w")
         self.save_thread = threading.Thread(target=self.save_image)
         self.save_thread.start()
 

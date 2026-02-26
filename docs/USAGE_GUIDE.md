@@ -54,16 +54,7 @@ git clone https://github.com/renquan87/HNURM-RADAR2026.git hnurm_radar
 cd hnurm_radar
 ```
 
-> 项目代码中配置路径硬编码为 `/data/projects/radar/hnurm_radar/`，请确保项目位于此路径。若需部署到其他路径，需修改以下文件中的路径引用：
-> - `configs/main_config.yaml`
-> - `configs/detector_config.yaml`
-> - `configs/converter_config.yaml`
-> - `configs/HAP_config.json`
-> - `src/hnurm_radar/hnurm_radar/camera_scheme/camera_detector.py` 中的常量
-> - `src/hnurm_radar/hnurm_radar/shared/judge_messager.py` 中的配置路径
-> - `src/hnurm_radar/hnurm_radar/lidar_scheme/detector_node.py` 中的路径
-> - `src/hnurm_radar/hnurm_radar/lidar_scheme/radar.py` 中的路径
-> - `src/registration/params/default.yaml`
+> 项目已消除硬编码绝对路径。所有路径通过 `src/hnurm_radar/hnurm_radar/shared/paths.py` 模块基于项目根目录动态计算，YAML 配置文件中使用相对路径（如 `weights/stage_one.pt`），运行时由 `resolve_path()` 自动拼接为绝对路径。因此项目可以部署到任意目录，无需修改任何路径配置。
 
 ### 2.2 安装依赖
 
@@ -79,7 +70,7 @@ sudo apt install ros-humble-cv-bridge ros-humble-sensor-msgs
 
 ```bash
 source /opt/ros/humble/setup.bash
-cd /data/projects/radar/hnurm_radar
+cd <你的项目目录>
 colcon build --symlink-install
 source install/setup.bash
 ```
@@ -102,7 +93,7 @@ global:
 camera:
   mode: 'test'           # 相机模式：'test' / 'video' / 'hik'
   video_source: 0        # video 模式下的视频源（设备号或文件路径）
-  test_image: '/data/projects/radar/hnurm_radar/test_resources/test1.png'
+  test_image: 'test_resources/test1.png'   # 相对于项目根目录
 
 car:
   life_span: 20          # 车辆信息可信生命周期（帧数）
@@ -137,10 +128,10 @@ area:                    # 英雄区域检测配置（双倍易伤触发）
 
 ```yaml
 path:
-  stage_one_path: '/data/projects/radar/hnurm_radar/weights/stage_one.pt'
-  stage_two_path: '/data/projects/radar/hnurm_radar/weights/stage_two.pt'
-  stage_three_path: '/data/projects/radar/hnurm_radar/weights/stage_three.pt'
-  tracker_path: '/data/projects/radar/hnurm_radar/configs/bytetrack.yaml'
+  stage_one_path: 'weights/stage_one.pt'       # 相对于项目根目录
+  stage_two_path: 'weights/stage_two.pt'
+  stage_three_path: 'weights/stage_three.pt'
+  tracker_path: 'configs/bytetrack.yaml'
 
 params:
   stage_one_conf: 0.3    # 第一阶段检测置信度阈值

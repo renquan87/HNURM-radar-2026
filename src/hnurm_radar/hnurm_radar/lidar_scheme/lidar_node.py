@@ -37,6 +37,7 @@ import sensor_msgs_py.point_cloud2 as pc2
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, qos_profile_sensor_data
 import time
 from ruamel.yaml import YAML
+from ..shared.paths import MAIN_CONFIG_PATH
 
 # 定义一个Pcd类，用于存储点云数据
 class Pcd:
@@ -181,8 +182,7 @@ class LidarListener(Node):
 
 
 def main(args=None):
-    main_config_path = "/data/projects/radar/hnurm_radar/configs/main_config.yaml"
-    main_cfg = YAML().load(open(main_config_path, encoding='Utf-8', mode='r'))
+    main_cfg = YAML().load(open(MAIN_CONFIG_PATH, encoding='Utf-8', mode='r'))
     rclpy.init(args=args)
     lidar = LidarListener(main_cfg)
     rclpy.spin(lidar)

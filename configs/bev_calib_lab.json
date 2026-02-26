@@ -1,0 +1,113 @@
+{
+  "description": "实验室地图（从左下角裁剪28x15m，resize到2800x1500px）",
+  "coordinate_convention": {
+    "world_origin": "图片左下角 = 像素(0, 1499) = 世界(0, 0)",
+    "world_x": "向右，0~28m（对应像素x方向）",
+    "world_y": "向上，0~15m（对应像素y方向，反向）",
+    "pixel_from_world": "px = wx * 100, py = 1500 - wy * 100",
+    "world_from_pixel": "wx = px / 100, wy = (1500 - py) / 100"
+  },
+  "field_width": 28.0,
+  "field_height": 15.0,
+  "px_width": 2800,
+  "px_height": 1500,
+  "scale_px_per_m": 100.0,
+  "original_image": {
+    "path": "map/lab_bev.png",
+    "size_px": [
+      2551,
+      2185
+    ],
+    "size_m": [
+      28.3,
+      24.1
+    ],
+    "ppm_x": 90.14,
+    "ppm_y": 90.66
+  },
+  "crop_info": {
+    "x_start": 0,
+    "y_start": 825,
+    "crop_w": 2524,
+    "crop_h": 1360
+  },
+  "calibration_points_mapping": [
+    {
+      "original_label": "(0.0,0.0)",
+      "original_pixel": [
+        708,
+        1218
+      ],
+      "new_pixel": [
+        785.4,
+        433.5
+      ],
+      "new_world": [
+        7.85,
+        10.67
+      ]
+    },
+    {
+      "original_label": "(5.0,1.0)",
+      "original_pixel": [
+        854,
+        1704
+      ],
+      "new_pixel": [
+        947.4,
+        969.5
+      ],
+      "new_world": [
+        9.47,
+        5.31
+      ]
+    },
+    {
+      "original_label": "(5.0,2.0)",
+      "original_pixel": [
+        946,
+        1697
+      ],
+      "new_pixel": [
+        1049.4,
+        961.8
+      ],
+      "new_world": [
+        10.49,
+        5.38
+      ]
+    },
+    {
+      "original_label": "(1.0,3.0)",
+      "original_pixel": [
+        1007,
+        1294
+      ],
+      "new_pixel": [
+        1117.1,
+        517.3
+      ],
+      "new_world": [
+        11.17,
+        9.83
+      ]
+    },
+    {
+      "original_label": "(0.0,3.0)",
+      "original_pixel": [
+        1000,
+        1189
+      ],
+      "new_pixel": [
+        1109.4,
+        401.5
+      ],
+      "new_world": [
+        11.09,
+        10.99
+      ]
+    }
+  ],
+  "bev_image": "map/lab_map_28x15.png",
+  "grid_image": "map/lab_map_28x15_grid.png"
+}

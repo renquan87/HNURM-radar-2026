@@ -1,8 +1,9 @@
+# 路径使用相对于项目根目录的相对路径，代码会自动解析为绝对路径
 path:
-  stage_one_path:  "/data/projects/radar/hnurm_radar/weights/stage_one.pt" # 未测试，不行就改成绝对路径
-  stage_two_path: "/data/projects/radar/hnurm_radar/weights/stage_two.pt" #
-  stage_three_path: "/data/projects/radar/hnurm_radar/weights/stage_three.pt"
-  tracker_path: "/data/projects/radar/hnurm_radar/configs/bytetrack.yaml"
+  stage_one_path:  "weights/stage_one.pt"
+  stage_two_path: "weights/stage_two.pt"
+  stage_three_path: "weights/stage_three.pt"
+  tracker_path: "configs/bytetrack.yaml"
 
 params:
   labels: ["B1", "B2", "B3", "B4", "B5", "B7", "R1", "R2", "R3", "R4", "R5", "R7"]
@@ -18,5 +19,5 @@ filter:
   jump_threshold: 3.0          # 单帧跳变阈值 (m)，超过则拒绝更新
   max_inactive_time: 3.0       # 滤波器超时清理时间 (s)
 
-is_record: false
+is_record: true
 record_fps: 60

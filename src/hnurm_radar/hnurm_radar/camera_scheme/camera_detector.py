@@ -35,17 +35,17 @@ import os
 import json
 from collections import deque
 from ultralytics import YOLO
-
+from ..shared.paths import (
+    MAIN_CONFIG_PATH, DETECTOR_CONFIG_PATH, PERSPECTIVE_CALIB_PATH,
+    PFA_MAP_2025_PATH, PFA_MAP_MASK_2025_PATH, TEST_RESOURCES_DIR,
+    resolve_path,
+)
 
 # ======================== 配置路径 ========================
-MAIN_CONFIG_PATH = "/data/projects/radar/hnurm_radar/configs/main_config.yaml"
-DETECTOR_CONFIG_PATH = "/data/projects/radar/hnurm_radar/configs/detector_config.yaml"
-# 透视变换标定文件（首次运行会自动生成）
-PERSPECTIVE_CALIB_PATH = "/data/projects/radar/hnurm_radar/configs/perspective_calib.json"
 # 地图图片（当前使用 PFA 2025 赛季地图，后续替换为 2026 赛季地图）
-MAP_IMAGE_PATH = "/data/projects/radar/hnurm_radar/map/pfa_map_2025.jpg"
+MAP_IMAGE_PATH = PFA_MAP_2025_PATH
 # 分区掩码图（PFA 2025 赛季掩码，后续用 make_mask 重新绘制 2026 版本）
-MASK_IMAGE_PATH = "/data/projects/radar/hnurm_radar/map/pfa_map_mask_2025.jpg"
+MASK_IMAGE_PATH = PFA_MAP_MASK_2025_PATH
 
 # ======================== 视频输入源 ========================
 # 现在通过 main_config.yaml 中的 camera_mode 配置项控制：
@@ -86,15 +86,15 @@ class CameraDetector(Node):
 
         # ---------- 加载 YOLO 模型 ----------
         self.get_logger().info('正在加载 YOLO 模型 ...')
-        self.model_car = YOLO(self.det_cfg['path']['stage_one_path'], task="detect")
+        self.model_car = YOLO(resolve_path(self.det_cfg['path']['stage_one_path']), task="detect")
         self.model_car.overrides['imgsz'] = 1280
-        self.model_car2 = YOLO(self.det_cfg['path']['stage_two_path'])
+        self.model_car2 = YOLO(resolve_path(self.det_cfg['path']['stage_two_path']))
         self.model_car2.overrides['imgsz'] = 256
-        self.model_car3 = YOLO(self.det_cfg['path']['stage_three_path'])
+        self.model_car3 = YOLO(resolve_path(self.det_cfg['path']['stage_three_path']))
         self.model_car3.overrides['imgsz'] = 256
         self.get_logger().info('YOLO 模型加载完毕。')
 
-        self.tracker_path = self.det_cfg['path']['tracker_path']
+        self.tracker_path = resolve_path(self.det_cfg['path']['tracker_path'])
         self.stage_one_conf = self.det_cfg['params']['stage_one_conf']
         self.stage_two_conf = self.det_cfg['params']['stage_two_conf']
         self.stage_three_conf = self.det_cfg['params']['stage_three_conf']
@@ -139,8 +139,8 @@ class CameraDetector(Node):
         camera_cfg = self.main_cfg.get('camera', {})
         self.camera_mode = camera_cfg.get('mode', 'video')
         video_source = camera_cfg.get('video_source', 0)
-        test_img_path = camera_cfg.get('test_image',
-            '/data/projects/radar/hnurm_radar/test_resources/pfa_test_image.jpg')
+        test_img_path = resolve_path(camera_cfg.get('test_image',
+            os.path.join(TEST_RESOURCES_DIR, 'pfa_test_image.jpg')))
 
         if self.camera_mode == 'test':
             # ====== 测试模式：使用静态图片反复推理 ======

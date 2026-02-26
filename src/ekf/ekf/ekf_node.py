@@ -129,6 +129,9 @@ class EKFNode(Node):
         for i in range(len(locations.locs)):
             location = locations.locs[i]
             robot_id = location.id
+            # 跳过 NULL 标签机器人（id=0），不做 EKF 滤波
+            if robot_id not in self.transform_to_th:
+                continue
             x = location.x
             y = location.y
             time = self.get_current_time_ms()
@@ -177,6 +180,10 @@ class EKFNode(Node):
             location.z = float(self.locations_queue[1][i].z)
             location.label = self.eneny_color
             locations.locs.append(location)
+        # 将 NULL 标签机器人直接透传（不经过 EKF 滤波）
+        for loc in self.recv_location.locs:
+            if loc.id not in self.transform_to_th:
+                locations.locs.append(loc)
         # 通过话题发布
         self.pub_location_filtered.publish(locations)
             

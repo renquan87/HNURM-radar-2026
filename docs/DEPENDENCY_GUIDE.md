@@ -939,7 +939,7 @@ sudo apt install -y libpcl-dev libeigen3-dev libtbb-dev libapr1-dev
 
 ```bash
 # 编译 Livox-SDK2
-cd /data/projects/radar/hnurm_radar/src/Livox-SDK2
+cd src/Livox-SDK2
 mkdir -p build && cd build
 cmake ..
 make -j$(nproc)
@@ -966,7 +966,7 @@ source /data/venv/radar-env/bin/activate
 pip install --upgrade pip
 
 # 安装 Python 依赖
-cd /data/projects/radar/hnurm_radar
+cd <项目根目录>
 pip install -r requirements.txt
 ```
 
@@ -980,7 +980,7 @@ source /opt/ros/humble/setup.bash
 source /data/venv/radar-env/bin/activate
 
 # 在工作空间根目录执行编译
-cd /data/projects/radar/hnurm_radar
+cd <项目根目录>
 colcon build --symlink-install
 
 # 加载编译产物

@@ -1,4 +1,10 @@
-# 启动 Lidar
+```shell
+colcon build --symlink-install
+source install/setup.bash
+./bringup.sh
+```
+在 rviz2 中用 "2D Pose Estimate" 工具给初始位姿
+## 启动 Lidar
 
 在启动launch前记得修改config里面的BDCODE
 
@@ -9,7 +15,7 @@ ros2 launch livox_ros2_driver livox_lidar_rviz_launch.py
 ros2 launch livox_ros2_driver livox_lidar_launch.py
 ```
 
-# 调试
+## 调试
 
 启动foxglove
 
@@ -18,7 +24,7 @@ source install/setup.zsh
 ros2 launch foxglove_bridge foxglove_bridge_launch.xml
 ```
 
-# 依赖
+## 依赖
 
 ```shell
 sudo apt install libpkgconf # livox_driver need

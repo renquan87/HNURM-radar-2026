@@ -53,6 +53,7 @@ from sensor_msgs.msg import PointCloud2
 from collections import deque
 from ruamel.yaml import YAML
 import os
+from ..shared.paths import MAIN_CONFIG_PATH, CONVERTER_CONFIG_PATH
 from detect_result.msg import DetectResult
 from detect_result.msg import Robots
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, qos_profile_sensor_data
@@ -82,9 +83,8 @@ class Radar(Node):
         self.bridge = CvBridge()
         # detector_config_path = "./configs/detector_config.yaml"
         # binocular_camera_cfg_path = "./configs/bin_cam_config.yaml"
-        main_config_path = "/data/projects/radar/hnurm_radar/configs/main_config.yaml"
-        converter_config_path = "/data/projects/radar/hnurm_radar/configs/converter_config.yaml"
-        main_cfg = YAML().load(open(main_config_path, encoding='Utf-8', mode='r'))
+        main_cfg = YAML().load(open(MAIN_CONFIG_PATH, encoding='Utf-8', mode='r'))
+        converter_config_path = CONVERTER_CONFIG_PATH
         
         # 全局变量
         self.global_my_color = main_cfg['global']['my_color']
@@ -143,7 +143,7 @@ class Radar(Node):
         self.timer = self.create_timer(1.0, self.on_timer)  # 定时查询 TF
         self.radar_to_field = np.ones((4, 4)) # 激光雷达到赛场的tf矩阵
         self.radar_to_field_inv = np.ones((4, 4)) # 激光雷达到赛场的tf矩阵的逆（用于将点云转换回雷达坐标系）
-    
+
     # 定时查询 TF
     def on_timer(self):
         try:
@@ -217,8 +217,11 @@ class Radar(Node):
         # 添加一列全为 1 的列，扩展为齐次坐标
         points = np.hstack((points, np.ones((points.shape[0], 1))))
 
+        # 转换到赛场坐标系（行向量形式：p @ M^T 等价于 M @ p_col）2
+        field_pts = np.dot(points, self.radar_to_field.T)
+
         # 转换到赛场坐标系
-        field_pts = np.dot(points,self.radar_to_field)  # 转置以保持形状一致
+        # field_pts = np.dot(points,self.radar_to_field)  # 转置以保持形状一致
         field_pts = field_pts[:, :3]  # 去掉齐次坐标的最后一列
 
         # 筛选 z 值不在范围内的点
@@ -232,7 +235,8 @@ class Radar(Node):
 
         # 再转换回到雷达坐标系
         filtered_points = np.hstack((filtered_points, np.ones((filtered_points.shape[0], 1))))
-        filtered_points = np.dot(filtered_points, self.radar_to_field_inv)  # 转置以保持形状一致
+        filtered_points = np.dot(filtered_points, self.radar_to_field_inv.T) # 转置以保持形状一致2
+        # filtered_points = np.dot(filtered_points, self.radar_to_field_inv)
         filtered_points = filtered_points[:, :3]  # 去掉齐次坐标的最后一列
 
         # 创建新的点云
@@ -279,6 +283,8 @@ class Radar(Node):
             return
         # 检测框对应点云
         box_pcd = o3d.geometry.PointCloud()
+        # 存储 NULL 标签机器人的位置（不经过 CarList，仅用于 display_panel 显示）
+        null_robot_locations = []
         # 遍历所有检测结果
         for detect_result in detect_results:
             # self.get_logger().info('I heard: "%s"' % detect_result)
@@ -286,13 +292,13 @@ class Radar(Node):
             # 获取检测框信息
             xyxy_box, xywh_box ,  track_id , label = sg_result.xyxy_box, sg_result.xywh_box, sg_result.track_id, sg_result.label
             # self.get_logger().info('I heard: "%s"' % xyxy_box)
-            # 过滤无效和己方车辆
-            if label == "NULL":
-                continue
-            if self.global_my_color == "Red" and self.carList.get_car_id(label) < 100 and self.carList.get_car_id(label) != 7:
-                continue
-            if self.global_my_color == "Blue" and self.carList.get_car_id(label) > 100 and self.carList.get_car_id(label) != 107:
-                continue
+            # 过滤己方车辆（NULL 标签不过滤，允许继续处理）
+            is_null = (label == "NULL")
+            if not is_null:
+                if self.global_my_color == "Red" and self.carList.get_car_id(label) < 100 and self.carList.get_car_id(label) != 7:
+                    continue
+                if self.global_my_color == "Blue" and self.carList.get_car_id(label) > 100 and self.carList.get_car_id(label) != 107:
+                    continue
             
             # 获取新xyxy_box , 原来是左上角和右下角，现在想要中心点保持不变，宽高设为原来的一半，再计算一个新的xyxy_box,可封装
             div_times = 1.01
@@ -325,7 +331,8 @@ class Radar(Node):
             center = np.hstack((center, np.array((1)))) # 齐次化
             center = center[:3]
             center = np.hstack((center, np.array((1)))) # ❓为什么要齐次化两次？
-            lidar_center = np.dot(center, self.extrinsic_matrix) # 使用外参矩阵进行转换
+            lidar_center = np.dot(self.extrinsic_matrix_inv, center) # camera→lidar: 用外参逆矩阵左乘列向量 2
+            # lidar_center = np.dot(center, self.extrinsic_matrix) # 使用外参矩阵进行转换
             lidar_center = lidar_center[:3]
             self.get_logger().info("lidar_center: {}".format(lidar_center))
             # self.get_logger().info("center: {}".format(center))
@@ -345,7 +352,11 @@ class Radar(Node):
             #     cv2.putText(result_img, "x: {:.2f}".format(field_xyz[0])+"y:{:.2f}".format(field_xyz[1])+"z:{:.2f}".format(field_xyz[2]), (int(xyxy_box[2]), int(xyxy_box[3]+10),),
             #         cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 122), 2)
             # 将结果打包
-            self.carList_results.append([track_id , self.carList.get_car_id(label) , xywh_box , 1 , center , field_xyz])
+            if is_null:
+                # NULL 标签机器人不写入 CarList，单独收集用于 display_panel 显示
+                null_robot_locations.append(field_xyz)
+            else:
+                self.carList_results.append([track_id , self.carList.get_car_id(label) , xywh_box , 1 , center , field_xyz])
         self.carList.update_car_info(self.carList_results)
         all_infos = self.carList.get_all_info() # 此步不做trust的筛选，留给messager做
         my_car_infos = []
@@ -380,6 +391,15 @@ class Radar(Node):
                     loc.id = car_id
                     loc.label = color
                     allLocation.locs.append(loc)
+        # 将 NULL 标签机器人加入 Locations（不经过 CarList，不影响 judge message）
+        for null_xyz in null_robot_locations:
+            loc = Location()
+            loc.x = float(null_xyz[0])
+            loc.y = float(null_xyz[1])
+            loc.z = float(null_xyz[2])
+            loc.id = 0
+            loc.label = 'NULL'
+            allLocation.locs.append(loc)
         self.pub_location.publish(allLocation)
 
 

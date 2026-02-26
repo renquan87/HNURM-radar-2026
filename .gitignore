@@ -32,10 +32,17 @@ __pycache__/
 # 点云数据文件
 # ========================
 *.pcd
+*.pcd.bak
+*.pcd2.bak
 target.xyz
 
 # ========================
-# 运行时生成
+# data 目录下的备份文件
+# ========================
+data/*.bak
+
+# ========================
+# 运行时生成 / 日志文件
 # ========================
 MvFGSdkLog/
 record/
@@ -50,9 +57,13 @@ record/
 *~
 
 # ========================
-# 系统文件
+# 系统文件 / 无用文件
 # ========================
 .DS_Store
 Thumbs.db
 docs/LEARNING_ROADMAP.md
 docs/FINAL_DOCUMENT_SUGGESTIONS.md
+docs/CONFIG_AND_PATHS_GUIDE.md
+docs/COORDINATE_TRANSFORM_GUIDE.md
+docs/HAP_config_说明.txt
+docs/LAB_TEST_PLAN.md

@@ -37,7 +37,8 @@ class DisplayPanel(Node):
             depth=3
         )
         self.locations = Locations()
-        self.map = cv2.imread('/data/projects/radar/hnurm_radar/map/std_map.png')
+        from .paths import STD_MAP_PATH
+        self.map = cv2.imread(STD_MAP_PATH)
         
         self.sub_location = self.create_subscription(Locations, "/ekf_location_filtered", self.location_callback, qos_profile)
         # 创建一个锁
@@ -69,17 +70,20 @@ class DisplayPanel(Node):
             if location.label == 'Red':
                 x = 28 - x
                 y = 15 - y
-                x = round(location.x, 2)
-                y = round(location.y, 2)
                 xx = 2800 - xx
                 yy = 1500 - yy
                 cv2.putText(show_map, str(location.id), (xx - 15, yy + 10), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 4)
                 cv2.putText(show_map, str((x)) + ',' + str((y)) + ',' + str(z), (xx, yy - 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 4)
                 cv2.circle(show_map, (xx, yy), 60, (0, 0, 255), 4)
-            else:
+            elif location.label == 'Blue':
                 cv2.putText(show_map, str(location.id), (xx - 15, yy + 10), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 0, 0), 4)
                 cv2.putText(show_map, str((x)) + ',' + str((y)) + ',' + str(z), (xx, yy - 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 4)
                 cv2.circle(show_map, (xx, yy), 60, (255, 0, 0), 4)
+            else:
+                # 颜色标签为 null/未知的机器人，灰色显示，不做坐标对称变换
+                cv2.putText(show_map, 'null', (xx - 15, yy + 10), cv2.FONT_HERSHEY_SIMPLEX, 2, (128, 128, 128), 4)
+                cv2.putText(show_map, str((x)) + ',' + str((y)) + ',' + str(z), (xx, yy - 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 4)
+                cv2.circle(show_map, (xx, yy), 60, (128, 128, 128), 4)
         cv2.imshow('map', show_map)
         cv2.waitKey(16)
         

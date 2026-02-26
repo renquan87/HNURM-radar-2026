@@ -45,13 +45,19 @@ from PyQt5.QtWidgets import (
 from ruamel.yaml import YAML
 
 # ======================== 配置路径 ========================
-MAIN_CONFIG_PATH = "/data/projects/radar/hnurm_radar/configs/main_config.yaml"
-PERSPECTIVE_CALIB_PATH = "/data/projects/radar/hnurm_radar/configs/perspective_calib.json"
-MAP_IMAGE_PATH = "/data/projects/radar/hnurm_radar/map/pfa_map_2025.jpg"
+from ..shared.paths import (
+    MAIN_CONFIG_PATH as _MAIN_CONFIG_PATH,
+    PERSPECTIVE_CALIB_PATH as _PERSPECTIVE_CALIB_PATH,
+    PFA_MAP_2025_PATH, TEST_RESOURCES_DIR,
+    FIELD_WIDTH, FIELD_HEIGHT,
+)
+MAIN_CONFIG_PATH = _MAIN_CONFIG_PATH
+PERSPECTIVE_CALIB_PATH = _PERSPECTIVE_CALIB_PATH
+MAP_IMAGE_PATH = PFA_MAP_2025_PATH
 
-# 地图物理尺寸
-FIELD_W = 28.0  # m
-FIELD_H = 15.0  # m
+# 地图物理尺寸（从场景配置自动获取）
+FIELD_W = FIELD_WIDTH   # m
+FIELD_H = FIELD_HEIGHT  # m
 
 
 # ======================== 相机图像采集线程 ========================
@@ -546,7 +552,7 @@ def main():
     video_source = camera_cfg.get('video_source', 0)
     test_img_path = camera_cfg.get(
         'test_image',
-        '/data/projects/radar/hnurm_radar/test_resources/test1.jpg')
+        os.path.join(TEST_RESOURCES_DIR, 'test1.jpg'))
 
     global camera_image
 

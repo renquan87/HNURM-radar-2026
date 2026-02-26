@@ -1,0 +1,15 @@
+{
+  "radar_world_position": [
+    3.703,
+    4.387,
+    1.05
+  ],
+  "yaw_deg": 12.9,
+  "method": "interactive_visual_alignment",
+  "description": "PCD已变换到世界坐标系，地图左下角=(0,0,0)",
+  "transformed_files": [
+    "/data/projects/radar/hnurm_radar/data/lab_pcds.pcd",
+    "/data/projects/radar/hnurm_radar/data/lab_pcds_downsampled.pcd"
+  ],
+  "note": "恢复原始PCD用 .bak 文件"
+}
