@@ -2,14 +2,16 @@
 global:
   my_color: "Red" # "Blue"
   is_debug: True # False
-  scene: "lab"  # "competition" = 赛场（28x15m）| "lab" = 实验室测试
+  scene: "competition"  # "competition" = 赛场（28x15m）| "lab" = 实验室测试
 
 # 场景配置：不同场景使用不同的地图和点云文件
 # 切换场景只需修改 global.scene，无需替换文件
 scenes:
   competition:
     std_map: "map/std_map.png"              # 方案二display_panel 底图
-    pfa_map: "map/pfa_map_2025.jpg"         # 方案一透视标定用地图
+    pfa_map: "map/pfa_map_2025.jpg"         # 方案一透视标定用地图（通用）
+    pfa_map_red: "map/pfa_map_red_2025.jpg"   # 红方视角地图（标定/小地图用）
+    pfa_map_blue: "map/pfa_map_blue_2025.jpg" # 蓝方视角地图（标定/小地图用）
     pcd_file: "data/pcds.pcd"               # 点云地图
     downsampled_pcd: "data/pcds_downsampled.pcd"
     field_width: 28.0                       # 赛场宽度(m)
@@ -27,7 +29,7 @@ scenes:
 camera:
   mode: "test"               # "test": 测试模式(静态图片) | "video": USB摄像头/视频文件 | "hik": 海康工业相机
   video_source: 0             # video 模式下的输入源：0=USB摄像头, 或视频文件路径如 "/path/to/video.mp4"
-  test_image: "test_resources/test1.png"  # test 模式下使用的图片路径（相对于项目根目录）
+  test_image: "test_resources/red1.png"  # test 模式下使用的图片路径（相对于项目根目录）
 
 
 car:

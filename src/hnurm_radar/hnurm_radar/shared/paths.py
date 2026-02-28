@@ -91,6 +91,8 @@ _scene = _load_scene_config()
 # ======================== 场景相关路径 ========================
 STD_MAP_PATH = os.path.join(PROJECT_ROOT, _scene["std_map"])
 PFA_MAP_2025_PATH = os.path.join(PROJECT_ROOT, _scene["pfa_map"])
+PFA_MAP_RED_PATH = os.path.join(PROJECT_ROOT, _scene.get("pfa_map_red", _scene["pfa_map"]))
+PFA_MAP_BLUE_PATH = os.path.join(PROJECT_ROOT, _scene.get("pfa_map_blue", _scene["pfa_map"]))
 PFA_MAP_MASK_2025_PATH = os.path.join(MAP_DIR, "pfa_map_mask_2025.jpg")
 
 PCD_FILE_PATH = os.path.join(PROJECT_ROOT, _scene["pcd_file"])

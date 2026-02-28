@@ -48,12 +48,13 @@ from ruamel.yaml import YAML
 from ..shared.paths import (
     MAIN_CONFIG_PATH as _MAIN_CONFIG_PATH,
     PERSPECTIVE_CALIB_PATH as _PERSPECTIVE_CALIB_PATH,
-    PFA_MAP_2025_PATH, TEST_RESOURCES_DIR,
+    PFA_MAP_2025_PATH, PFA_MAP_RED_PATH, PFA_MAP_BLUE_PATH,
+    TEST_RESOURCES_DIR,
     FIELD_WIDTH, FIELD_HEIGHT,
 )
 MAIN_CONFIG_PATH = _MAIN_CONFIG_PATH
 PERSPECTIVE_CALIB_PATH = _PERSPECTIVE_CALIB_PATH
-MAP_IMAGE_PATH = PFA_MAP_2025_PATH
+# 地图路径在 CalibrationUI.__init__ 中根据 my_color 动态选择
 
 # 地图物理尺寸（从场景配置自动获取）
 FIELD_W = FIELD_WIDTH   # m
@@ -126,21 +127,27 @@ class CalibrationUI(QWidget):
         self._init_ui()
 
     def _init_ui(self):
+        # ---- 根据颜色选择地图 ----
+        if self.my_color == "Red":
+            self.map_image_path = PFA_MAP_RED_PATH
+        else:
+            self.map_image_path = PFA_MAP_BLUE_PATH
+
         # ---- 左侧：相机图像 ----
         self.left_label = QLabel(self)
         self.left_label.setFixedSize(1280, 960)
         self.left_label.setStyleSheet("border: 2px solid black;")
         self.left_label.mousePressEvent = self._left_clicked
 
-        # ---- 右侧：赛场地图 ----
+        # ---- 右侧：赛场地图（放大显示，提高标定精度） ----
         self.right_label = QLabel(self)
-        self.right_label.setFixedSize(560, 300)
+        self.right_label.setFixedSize(840, 450)
         self.right_label.setStyleSheet("border: 2px solid black;")
         self.right_label.mousePressEvent = self._right_clicked
 
         # ---- 信息文本框 ----
         self.text_edit = QTextEdit(self)
-        self.text_edit.setFixedSize(560, 200)
+        self.text_edit.setFixedSize(840, 200)
         self.text_edit.setReadOnly(True)
 
         # ---- 按钮 ----
@@ -162,7 +169,7 @@ class CalibrationUI(QWidget):
 
         # ---- 状态标签 ----
         self.status_label = QLabel(self)
-        self.status_label.setFixedSize(560, 30)
+        self.status_label.setFixedSize(840, 30)
         self._update_status()
 
         # ---- 布局 ----
@@ -185,18 +192,30 @@ class CalibrationUI(QWidget):
         self.setLayout(hbox)
         self.setWindowTitle(
             f'透视变换标定 — {self.my_color}方')
-        self.setGeometry(50, 50, 1870, 980)
+        self.setGeometry(20, 20, 2160, 980)
 
-        # ---- 读取地图图像 ----
-        self.map_orig = cv2.imread(MAP_IMAGE_PATH)
+        # ---- 读取地图图像（根据颜色选择红/蓝方地图） ----
+        self.map_orig = cv2.imread(self.map_image_path)
         if self.map_orig is None:
-            self._log("⚠ 无法读取地图: " + MAP_IMAGE_PATH)
+            self._log(f"⚠ 无法读取地图: {self.map_image_path}，尝试通用地图")
+            self.map_orig = cv2.imread(PFA_MAP_2025_PATH)
+        if self.map_orig is None:
+            self._log("⚠ 通用地图也无法读取，使用空白底图")
             self.map_orig = np.zeros((1500, 2800, 3), dtype=np.uint8)
 
         self.map_h_orig, self.map_w_orig = self.map_orig.shape[:2]
-        # 显示缩放比例
-        self.right_scale_x = self.map_w_orig / 560.0
-        self.right_scale_y = self.map_h_orig / 300.0
+
+        # ---- 判断地图方向 ----
+        # 横版 (W>=H): W 对应 28m (x轴), H 对应 15m (y轴)
+        # 竖版 (H>W):  H 对应 28m (x轴), W 对应 15m (y轴)
+        #   竖版地图与相机视角一致（红方/蓝方各自的视角），无需旋转
+        self.is_portrait = (self.map_h_orig > self.map_w_orig)
+        if self.is_portrait:
+            self._log(f"ℹ 地图为竖版({self.map_w_orig}×{self.map_h_orig})，"
+                      f"H={self.map_h_orig}→{FIELD_W}m, W={self.map_w_orig}→{FIELD_H}m")
+        # 显示缩放比例（地图显示区域放大到 840×450）
+        self.right_scale_x = self.map_w_orig / 840.0
+        self.right_scale_y = self.map_h_orig / 450.0
 
         # ---- 读取相机图像 ----
         self.cam_frame = camera_image
@@ -222,7 +241,7 @@ class CalibrationUI(QWidget):
         self._log("步骤: 点击「开始标定」冻结画面 → "
                   "左图点击特征点 → 右图点击对应地图位置 → "
                   "点够后点击「保存计算」")
-        self._log(f"地图: {MAP_IMAGE_PATH}")
+        self._log(f"地图: {self.map_image_path}")
         self._log(f"赛场尺寸: {FIELD_W}m × {FIELD_H}m")
         self._log("─" * 40)
 
@@ -295,6 +314,10 @@ class CalibrationUI(QWidget):
         calib_data = {
             'calibration_time': time.strftime("%Y-%m-%d %H:%M:%S"),
             'my_color': self.my_color,
+            'map_image': os.path.basename(self.map_image_path),
+            'map_w': self.map_w_orig,
+            'map_h': self.map_h_orig,
+            'map_is_portrait': self.is_portrait,
         }
 
         # ---- 地面层 ----
@@ -390,22 +413,15 @@ class CalibrationUI(QWidget):
         map_px = int(event.pos().x() * self.right_scale_x)
         map_py = int(event.pos().y() * self.right_scale_y)
 
-        # 地图像素 → 赛场米坐标
-        # 约定: 地图 W=2800 对应 28m, H=1500 对应 15m
-        # 地图像素原点在左上角，赛场 y=0 在地图底部
-        field_x = map_px / (self.map_w_orig / FIELD_W)
-        field_y = (self.map_h_orig - map_py) / (self.map_h_orig / FIELD_H)
-
-        field_x = round(field_x, 2)
-        field_y = round(field_y, 2)
-
-        self.map_points[layer].append([field_x, field_y])
+        # ★ 与原始 PFA 标定器一致：直接存储地图像素坐标
+        # Homography 映射: 相机像素 → 地图像素
+        # 赛场米坐标的转换在 camera_detector 运行时完成
+        self.map_points[layer].append([map_px, map_py])
         self.map_count = len(self.map_points[layer])
 
         idx = self.map_count
         self._log(f"  [{LAYER_NAMES[layer]}] 地图点 M{idx}: "
-                  f"赛场({field_x}, {field_y})m "
-                  f"[地图像素({map_px}, {map_py})]")
+                  f"地图像素({map_px}, {map_py})")
         self._update_status()
         self._refresh_images()
 
@@ -438,15 +454,13 @@ class CalibrationUI(QWidget):
 
         # ---- 右图：地图 ----
         right_rgb = cv2.cvtColor(self.map_orig.copy(), cv2.COLOR_BGR2RGB)
-        right_show = cv2.resize(right_rgb, (560, 300))
+        right_show = cv2.resize(right_rgb, (840, 450))
 
-        # 画已选地图点
+        # 画已选地图点（map_points 存的是地图原图像素坐标）
         for layer_idx in range(2):
             color = LAYER_COLORS[layer_idx]
-            for i, (fx, fy) in enumerate(self.map_points[layer_idx]):
-                # 赛场米 → 地图像素 → 显示像素
-                mpx = fx * (self.map_w_orig / FIELD_W)
-                mpy = self.map_h_orig - fy * (self.map_h_orig / FIELD_H)
+            for i, (mpx, mpy) in enumerate(self.map_points[layer_idx]):
+                # 地图原图像素 → 显示像素
                 sx = int(mpx / self.right_scale_x)
                 sy = int(mpy / self.right_scale_y)
                 cv2.circle(right_show, (sx, sy), 5, color, -1)

@@ -87,7 +87,7 @@ src/hnurm_radar/
 │   ├── shared/                 # ★ 两种方案共享的节点
 │   │   ├── __init__.py
 │   │   ├── judge_messager.py   # 【节点】裁判系统串口通信节点
-│   │   ├── display_panel.py    # 【节点】操作手显示面板节点
+│   │   ├── display_panel.py    # 【节点】显示面板节点
 │   │   └── publish_video.py    # 【节点】视频流发布节点
 │   │
 │   ├── Camera/                 # 相机驱动封装（共享模块）

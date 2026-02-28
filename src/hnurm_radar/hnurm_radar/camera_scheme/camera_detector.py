@@ -175,9 +175,12 @@ class CameraDetector(Node):
                 self.get_logger().info(f"使用视频源: {src_name}")
 
         # ---------- 透视变换矩阵（多层） ----------
-        self.H_ground = None    # 地面层 Homography
+        self.H_ground = None    # 地面层 Homography (相机像素→地图像素)
         self.H_highland = None  # 高地层 Homography
         self.H = None           # 兼容：默认指向地面层
+        self.calib_map_w = None # 标定时使用的地图宽度(px)
+        self.calib_map_h = None # 标定时使用的地图高度(px)
+        self.calib_map_portrait = False  # 标定地图是否竖版
         self.mask_img = None    # 分区掩码图
         self._load_or_calibrate_homography()
         self._load_mask()
@@ -228,6 +231,16 @@ class CameraDetector(Node):
                 self.H_ground = np.array(data['H'], dtype=np.float64)
                 self.get_logger().info("兼容旧格式：单层 H 作为地面层矩阵。")
             self.H = self.H_ground  # 默认指向地面层
+            # 读取标定时的地图尺寸信息（新格式）
+            if 'map_w' in data and 'map_h' in data:
+                self.calib_map_w = int(data['map_w'])
+                self.calib_map_h = int(data['map_h'])
+                self.calib_map_portrait = data.get('map_is_portrait', False)
+                self.get_logger().info(
+                    f"标定地图尺寸: {self.calib_map_w}×{self.calib_map_h}, "
+                    f"竖版={self.calib_map_portrait}")
+            else:
+                self.get_logger().info("旧格式标定文件，无地图尺寸信息（假设H直接输出赛场米坐标）")
         else:
             self.get_logger().info("未找到透视变换标定文件，进入交互式标定 ...")
             self._interactive_calibrate()
@@ -238,17 +251,19 @@ class CameraDetector(Node):
             self.mask_img = cv2.imread(MASK_IMAGE_PATH)
             if self.mask_img is not None:
                 h, w = self.mask_img.shape[:2]
-                # PFA 的掩码是竖置 (2800×1500)，需要旋转为横置 (1500×2800)
-                # 横置约定：W=2800 对应赛场 28m (x轴), H=1500 对应 15m (y轴)
-                if h > w:  # 竖置，需要旋转
-                    self.mask_img = cv2.rotate(self.mask_img, cv2.ROTATE_90_CLOCKWISE)
+                # 判断掩码方向：竖版(H>W) 或 横版(W>=H)
+                self.mask_is_portrait = (h > w)
+                if self.mask_is_portrait:
                     self.get_logger().info(
-                        f"掩码图为竖置({h}×{w})，已自动旋转为横置"
-                        f"({self.mask_img.shape[0]}×{self.mask_img.shape[1]})")
+                        f"掩码图为竖版({w}×{h})，H→28m, W→15m")
+                else:
+                    self.get_logger().info(
+                        f"掩码图为横版({w}×{h})，W→28m, H→15m")
                 self.get_logger().info(f"分区掩码已加载: {MASK_IMAGE_PATH}")
             else:
                 self.get_logger().warn(f"无法读取掩码图: {MASK_IMAGE_PATH}，将仅使用地面层")
         else:
+            self.mask_is_portrait = False
             self.get_logger().info("未找到分区掩码图，将仅使用地面层透视变换。"
                                    f"（可使用 make_mask 工具生成: {MASK_IMAGE_PATH}）")
 
@@ -282,15 +297,47 @@ class CameraDetector(Node):
     # ================================================================
     #  透视变换：像素 → 赛场坐标
     # ================================================================
+    def _map_pixel_to_field(self, map_px, map_py):
+        """
+        将地图像素坐标转换为赛场米坐标。
+        与原始 PFA 标定方案一致：H 矩阵输出地图像素，运行时再转赛场米。
+
+        关键：红方和蓝方的地图是 180° 旋转关系，坐标转换公式不同！
+        （参考 pfa_vision_radar/main.py 中 send_point_B / send_point_R）
+
+        蓝方竖版地图:
+          field_x = map_py / map_h * 28    (地图纵轴→赛场x)
+          field_y = map_px / map_w * 15    (地图横轴→赛场y)
+        红方竖版地图（相对蓝方旋转180°）:
+          field_x = (map_h - map_py) / map_h * 28
+          field_y = (map_w - map_px) / map_w * 15
+        """
+        if self.calib_map_w is None:
+            # 旧格式：H 直接输出赛场米坐标，无需转换
+            return map_px, map_py
+
+        if self.calib_map_portrait:
+            if self.my_color == 'Red':
+                # 红方地图：坐标需要翻转（180°旋转关系）
+                field_x = (self.calib_map_h - map_py) / self.calib_map_h * 28.0
+                field_y = (self.calib_map_w - map_px) / self.calib_map_w * 15.0
+            else:
+                # 蓝方地图
+                field_x = map_py / self.calib_map_h * 28.0
+                field_y = map_px / self.calib_map_w * 15.0
+        else:
+            field_x = map_px / self.calib_map_w * 28.0
+            field_y = (self.calib_map_h - map_py) / self.calib_map_h * 15.0
+        return field_x, field_y
+
     def pixel_to_field(self, px, py):
         """
         将图像像素坐标 (px, py) 通过多层 Homography 变换到赛场坐标 (fx, fy)。
 
         流程:
-          1. 先用地面层矩阵做一次变换得到初始赛场坐标
-          2. 将赛场坐标映射到掩码图像素位置，查掩码颜色
-          3. 若掩码为黑色（地面）→ 使用地面层结果
-             若掩码为非黑色（高地）且高地层矩阵存在 → 用高地层矩阵重新变换
+          1. H 矩阵将相机像素变换到地图像素坐标
+          2. 用地图像素坐标查掩码判定高度层
+          3. 地图像素坐标转换为赛场米坐标
 
         参数:
             px, py: 原始分辨率下的像素坐标
@@ -302,17 +349,26 @@ class CameraDetector(Node):
 
         pt = np.array([[[px, py]]], dtype=np.float64)
 
-        # Step 1: 地面层变换
+        # Step 1: 地面层变换 → 地图像素坐标
         transformed = cv2.perspectiveTransform(pt, self.H_ground)
-        fx = transformed[0][0][0]
-        fy = transformed[0][0][1]
+        map_x = transformed[0][0][0]
+        map_y = transformed[0][0][1]
 
-        # Step 2: 查掩码判定高度层
+        # Step 2: 查掩码判定高度层（直接用地图像素坐标查掩码）
         if self.mask_img is not None and self.H_highland is not None:
-            # 赛场坐标 → 掩码图像素 (100 px/m, 2800×1500)
             mask_h, mask_w = self.mask_img.shape[:2]
-            mx = int(fx * mask_w / 28.0)
-            my = int(mask_h - fy * mask_h / 15.0)  # y 轴翻转
+            # 掩码与标定地图同方向同尺寸，直接按比例映射
+            if self.calib_map_w is not None:
+                mx = int(map_x * mask_w / self.calib_map_w)
+                my = int(map_y * mask_h / self.calib_map_h)
+            else:
+                # 旧格式：map_x/map_y 是赛场米坐标
+                if self.mask_is_portrait:
+                    mx = int(map_y * mask_w / 15.0)
+                    my = int(map_x * mask_h / 28.0)
+                else:
+                    mx = int(map_x * mask_w / 28.0)
+                    my = int(mask_h - map_y * mask_h / 15.0)
             mx = max(0, min(mx, mask_w - 1))
             my = max(0, min(my, mask_h - 1))
 
@@ -322,11 +378,13 @@ class CameraDetector(Node):
                                pixel_color[2] == 0)
 
             if is_highland:
-                # Step 3: 用高地层矩阵重新变换
+                # 用高地层矩阵重新变换
                 transformed_h = cv2.perspectiveTransform(pt, self.H_highland)
-                fx = transformed_h[0][0][0]
-                fy = transformed_h[0][0][1]
+                map_x = transformed_h[0][0][0]
+                map_y = transformed_h[0][0][1]
 
+        # Step 3: 地图像素 → 赛场米坐标
+        fx, fy = self._map_pixel_to_field(map_x, map_y)
         return (fx, fy)
 
     def get_box_bottom_center(self, xyxy_box):
@@ -530,8 +588,12 @@ class CameraDetector(Node):
                         self.Status[int(track_id)] -= 1
                     if self.Status[int(track_id)] < 4:
                         self.Status[int(track_id)] = 0
+                    # 高置信度纠正：当前帧分类与投票结果不一致时，加大权重
+                    vote_weight = 0.5 + conf * 0.5
+                    if conf > 0.85 and label != int(float(classify_label)) and max(self.Track_value[int(track_id)]) > 0:
+                        vote_weight = 2.0 + conf * 2.0  # 高置信度不一致时给 4 倍权重纠正
                     self.Track_value[int(track_id)][int(float(
-                        classify_label))] += 0.5 + conf * 0.5
+                        classify_label))] += vote_weight
 
             label = self.Track_value[int(track_id)].index(
                 max(self.Track_value[int(track_id)]))
@@ -746,38 +808,19 @@ class CameraDetector(Node):
         在小地图上绘制机器人位置。
         地图图片尺寸映射: 赛场 28m×15m → 图片 2800×1500 像素（100 px/m）
 
-        镜像逻辑：
-          - 地图默认为蓝方视角（蓝方在左 x=0，红方在右 x=28）
-          - 若 my_color == "Red"，则所有坐标做 180° 镜像，
-            使操作手始终看到己方基地在左下角
-          - 机器人颜色只影响绘制颜色，不影响位置
+        地图方向：红方在左(x=0)，蓝方在右(x=28)，与世界坐标系一致。赛场坐标直接映射到地图像素，无需镜像。
         """
         show_map = self.map_img.copy()
-        need_mirror = (self.my_color == 'Red')
 
         for loc in locations.locs:
             x = round(loc.x, 2)
             y = round(loc.y, 2)
 
-            # 赛场坐标 → 地图像素
-            xx = int(x * 100)
-            yy = int(1500 - y * 100)
-
-            # 限制范围
-            xx = max(0, min(xx, 2800))
-            yy = max(0, min(yy, 1500))
-
-            if need_mirror:
-                # 红方操作手：整张地图 180° 镜像
-                map_xx = 2800 - xx
-                map_yy = 1500 - yy
-                disp_x = round(28 - x, 2)
-                disp_y = round(15 - y, 2)
-            else:
-                map_xx = xx
-                map_yy = yy
-                disp_x = x
-                disp_y = y
+            # 赛场坐标 → 地图像素（地图与世界坐标系方向一致，无需镜像）
+            map_xx = max(0, min(int(x * 100), 2800))
+            map_yy = max(0, min(int(1500 - y * 100), 1500))
+            disp_x = x
+            disp_y = y
 
             # 机器人颜色只决定绘制颜色
             if loc.label == 'Red':

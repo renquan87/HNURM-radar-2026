@@ -67,3 +67,8 @@ docs/CONFIG_AND_PATHS_GUIDE.md
 docs/COORDINATE_TRANSFORM_GUIDE.md
 docs/HAP_config_说明.txt
 docs/LAB_TEST_PLAN.md
+
+*.mp4
+test_output/
+test_output/*.jpg
+test_output/*.png
