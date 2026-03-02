@@ -72,3 +72,5 @@ docs/LAB_TEST_PLAN.md
 test_output/
 test_output/*.jpg
 test_output/*.png
+docs/COORDINATE_TRANSFORM_COMPARISON.md
+docs/COORDINATE_TRANSFORM_EXPLANATION.md

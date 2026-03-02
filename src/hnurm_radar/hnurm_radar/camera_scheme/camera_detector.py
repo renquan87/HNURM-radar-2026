@@ -695,11 +695,16 @@ class CameraDetector(Node):
                     for result in results:
                         xyxy_box, xywh_box, track_id, label = result
 
-                        if label == "NULL":
-                            continue
+                        # 暂时保留 NULL 标签用于测试定位效果
+                        # if label == "NULL":
+                        #     continue
+                        
                         # 过滤己方车辆
                         car_id = self.carList.get_car_id(label) if label != "NULL" else -1
-                        if car_id == -1:
+                        # 测试模式：允许 NULL 标签通过，使用 track_id 作为临时 ID
+                        if car_id == -1 and label == "NULL":
+                            car_id = 9000 + track_id  # 使用 9000+ 作为 NULL 机器人的临时 ID
+                        elif car_id == -1:
                             continue
                         if self.my_color == "Red" and car_id < 100 and car_id != 7:
                             continue
@@ -753,17 +758,18 @@ class CameraDetector(Node):
                                     (disp_x, disp_y),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
 
-                        # 组装 CarList 结果
-                        orig_xywh = [
-                            float(xywh_box[0] * ORIG_W / INFER_W),
-                            float(xywh_box[1] * ORIG_H / INFER_H),
-                            float(xywh_box[2] * ORIG_W / INFER_W),
-                            float(xywh_box[3] * ORIG_H / INFER_H),
-                        ]
-                        camera_xyz = np.array([0.0, 0.0, 0.0])  # 透视变换无3D相机坐标
-                        carList_results.append([
-                            track_id, car_id, orig_xywh, 1, camera_xyz, field_xyz
-                        ])
+                        # 组装 CarList 结果（NULL 机器人跳过 CarList 更新）
+                        if label != "NULL":
+                            orig_xywh = [
+                                float(xywh_box[0] * ORIG_W / INFER_W),
+                                float(xywh_box[1] * ORIG_H / INFER_H),
+                                float(xywh_box[2] * ORIG_W / INFER_W),
+                                float(xywh_box[3] * ORIG_H / INFER_H),
+                            ]
+                            camera_xyz = np.array([0.0, 0.0, 0.0])  # 透视变换无3D相机坐标
+                            carList_results.append([
+                                track_id, car_id, orig_xywh, 1, camera_xyz, field_xyz
+                            ])
 
                         # 发布 Location 消息
                         loc = Location()
