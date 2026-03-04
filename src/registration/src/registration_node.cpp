@@ -223,20 +223,15 @@ void RelocaliztionNode::load_pcd_map(const std::string& map_path){
 
 
 void RelocaliztionNode::timer_pub_tf_callback(){
-  if (cloud_)   //test reading pcd
-    {   
-      cloud_->header.stamp = this->now();
-      pointcloud_pub_->publish(*cloud_);
-      if(use_fixed_)  //use tf guess form quatro , small_gicp do global relocalization
+  if (cloud_)
+  {   
+      // TF only — PCD map is published in the 2s timer_callback to avoid overloading RViz
+      if(use_fixed_)
       {
-        // RCLCPP_INFO(this->get_logger(),"test use fixed method");
         if(get_first_tf_from_quatro_)
         {
-          // source_cloud_PointCovariance_ = voxelgrid_sampling_omp<pcl::PointCloud<pcl::PointXYZ>, pcl::PointCloud<pcl::PointCovariance>>(*source_cloud_, source_voxel_size_);
-          // RCLCPP_INFO(this->get_logger(),"publish pcd map");
           if(source_cloud_PointCovariance_)
           {
-            // relocalization();
             transform.header.frame_id = "map";  
             transform.header.stamp = this->now();
             tf_broadcaster_->sendTransform(transform);
@@ -245,11 +240,8 @@ void RelocaliztionNode::timer_pub_tf_callback(){
       }
       else if(!use_quatro_)
       {
-        // source_cloud_PointCovariance_ = voxelgrid_sampling_omp<pcl::PointCloud<pcl::PointXYZ>, pcl::PointCloud<pcl::PointCovariance>>(*source_cloud_, source_voxel_size_);
-        // RCLCPP_INFO(this->get_logger(),"publish pcd map");
         if(source_cloud_PointCovariance_)
         {
-          // relocalization();
           transform.header.frame_id = "map";  
           transform.header.stamp = this->now();
           tf_broadcaster_->sendTransform(transform);
@@ -265,7 +257,7 @@ void RelocaliztionNode::timer_callback(){
     if (cloud_)   //test reading pcd
     {   
       cloud_->header.stamp = this->now();
-      // pointcloud_pub_->publish(*cloud_);
+      pointcloud_pub_->publish(*cloud_);  // publish PCD map at 0.5Hz (every 2s), not 100Hz
       if(use_fixed_)  //use tf guess form quatro , small_gicp do global relocalization
       {
         // RCLCPP_INFO(this->get_logger(),"test use fixed method");
@@ -330,7 +322,10 @@ void RelocaliztionNode::pointcloud_sub_callback(const sensor_msgs::msg::PointClo
           RCLCPP_INFO(this->get_logger(),"publish tf");
           get_first_tf_from_quatro_ = true;
         }
-        else accumulation_counter_ =0; //reset ,accumulate again
+        else {
+          RCLCPP_WARN(get_logger(), "Quatro failed, retrying...");
+          accumulation_counter_ = 0; //reset, accumulate again
+        }
       }
       
     }
@@ -468,7 +463,6 @@ void RelocaliztionNode::relocalization() {
     pre_result_ = result.T_target_source;
     doFirstRegistration_ = true;
     Eigen::Isometry3d T_map_odom = pre_result_;
-    
     
     // publish transform
     transform.header.stamp = this->now();

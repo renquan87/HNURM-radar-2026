@@ -25,6 +25,8 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, qos_profile_
 import threading
 import time
 import cv2
+import numpy as np
+
 
 class DisplayPanel(Node):
 
@@ -67,18 +69,35 @@ class DisplayPanel(Node):
             #     xx = max(0, min(xx, 2800))
             #     yy = max(0, min(yy, 1500))
                 
+            # 判断是否为空中机器人 (id=6 或 106)
+            is_air_robot = location.id in (6, 106)
+            air_suffix = " UAV" if is_air_robot else ""
+            
             if location.label == 'Red':
                 x = 28 - x
                 y = 15 - y
                 xx = 2800 - xx
                 yy = 1500 - yy
-                cv2.putText(show_map, str(location.id), (xx - 15, yy + 10), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 4)
+                color = (0, 0, 255)  # 红色
+                cv2.putText(show_map, str(location.id) + air_suffix, (xx - 15, yy + 10), cv2.FONT_HERSHEY_SIMPLEX, 2, color, 4)
                 cv2.putText(show_map, str((x)) + ',' + str((y)) + ',' + str(z), (xx, yy - 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 4)
-                cv2.circle(show_map, (xx, yy), 60, (0, 0, 255), 4)
+                if is_air_robot:
+                    # 空中机器人用菱形标记 + 显示高度
+                    pts = np.array([[xx, yy-50], [xx+50, yy], [xx, yy+50], [xx-50, yy]], np.int32)
+                    cv2.polylines(show_map, [pts], True, color, 3)
+                    cv2.putText(show_map, f"h={z:.1f}m", (xx + 55, yy + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                else:
+                    cv2.circle(show_map, (xx, yy), 60, color, 4)
             elif location.label == 'Blue':
-                cv2.putText(show_map, str(location.id), (xx - 15, yy + 10), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 0, 0), 4)
+                color = (255, 0, 0)  # 蓝色
+                cv2.putText(show_map, str(location.id) + air_suffix, (xx - 15, yy + 10), cv2.FONT_HERSHEY_SIMPLEX, 2, color, 4)
                 cv2.putText(show_map, str((x)) + ',' + str((y)) + ',' + str(z), (xx, yy - 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 4)
-                cv2.circle(show_map, (xx, yy), 60, (255, 0, 0), 4)
+                if is_air_robot:
+                    pts = np.array([[xx, yy-50], [xx+50, yy], [xx, yy+50], [xx-50, yy]], np.int32)
+                    cv2.polylines(show_map, [pts], True, color, 3)
+                    cv2.putText(show_map, f"h={z:.1f}m", (xx + 55, yy + 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                else:
+                    cv2.circle(show_map, (xx, yy), 60, color, 4)
             else:
                 # 颜色标签为 null/未知的机器人，灰色显示，不做坐标对称变换
                 cv2.putText(show_map, 'null', (xx - 15, yy + 10), cv2.FONT_HERSHEY_SIMPLEX, 2, (128, 128, 128), 4)

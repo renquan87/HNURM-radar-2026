@@ -878,6 +878,7 @@ class JudgeMessager(Node):
         
     # robot_location是一个6*[x,y]的列表，存放敌方机器人坐标
     # 使用0x0305向裁判系统发送敌方机器人定位信息
+    # 顺序：英雄(1号)、工程(2号)、步兵3(3号)、步兵4(4号)、步兵5(5号)、哨兵(7号)
     def send_map_robot_location(self,robot_location):
         cmd_id = struct.pack('H', 0x0305)
         data = b''
@@ -913,7 +914,9 @@ class JudgeMessager(Node):
         self.ser.write(tx_buff)
         
     def judge_loop(self): # 主循环，不断发送敌方机器人位置和双倍易伤信息
-        robot_trans = {101:0,102:1,103:2,104:3,105:4,107:5, 1:0, 2:1, 3:2, 4:3, 5:4, 7:5}
+        # ID 到发送数组下标的映射：英雄(0),工程(1),步兵3(2),步兵4(3),步兵5(4),哨兵(5),空中(6)
+        robot_trans = {101:0, 102:1, 103:2, 104:3, 105:4, 107:5,
+                       1:0, 2:1, 3:2, 4:3, 5:4, 7:5}
         while rclpy.ok():
             cur_locations = Locations()
             with self.location_lock:

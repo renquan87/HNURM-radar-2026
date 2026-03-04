@@ -88,17 +88,19 @@ class EKFNode(Node):
             3: 3,
             4: 4,
             5: 5,
+            6: 7,       # 红方空中机器人 → 第7个滤波器
             7: 6,
             101: 1,
             102: 2,
             103: 3,
             104: 4,
             105: 5,
+            106: 7,     # 蓝方空中机器人 → 第7个滤波器
             107: 6
         }
-        # 初始化6个机器人的EKF滤波器，修改噪声参数q，r减小突变对数据的影响
+        # 初始化7个机器人的EKF滤波器（6个地面 + 1个空中），修改噪声参数q，r减小突变对数据的影响
         self.kalfilt = [
-            RobotEKF(4, 4, pval=0.001, qval=1e-4, rval=0.0005, interval=0.05) for _ in range(6)
+            RobotEKF(4, 4, pval=0.001, qval=1e-4, rval=0.0005, interval=0.05) for _ in range(7)
         ]
 
         # 创建发布者和订阅者
@@ -111,7 +113,7 @@ class EKFNode(Node):
         self.timer = self.create_timer(0.05, self.timer_callback)  # 50 ms
         
         # 初始化位置队列，保存上次和当前的机器人位置信息 [0]是上次的， [1]是当前的
-        self.locations_queue = [[RobotInfo(0,0,0, 0), RobotInfo(0,0,0,0), RobotInfo(0,0,0,0), RobotInfo(0,0,0,0),RobotInfo(0,0,0,0),RobotInfo(0,0,0,0)] for i in range(2)]
+        self.locations_queue = [[RobotInfo(0,0,0, 0), RobotInfo(0,0,0,0), RobotInfo(0,0,0,0), RobotInfo(0,0,0,0),RobotInfo(0,0,0,0),RobotInfo(0,0,0,0),RobotInfo(0,0,0,0)] for i in range(2)]
 
     # 获取当前时间的毫秒数    
     def get_current_time_ms(self):
@@ -141,7 +143,7 @@ class EKFNode(Node):
             self.locations_queue[1][self.transform_to_th[robot_id] - 1].y = y
             self.locations_queue[1][self.transform_to_th[robot_id] - 1].time = time
             self.locations_queue[1][self.transform_to_th[robot_id] - 1].z = location.z
-        estimated_locations = [[0,0,0,0], [0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]
+        estimated_locations = [[0,0,0,0], [0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]
         # 对每个机器人进行卡尔曼滤波
         for i in range(len(self.locations_queue[0])):
             # 如果没有新的数据,则跳过
@@ -162,23 +164,31 @@ class EKFNode(Node):
         self.get_logger().info(f"Estimated locations: {estimated_locations}")
         
         # 发布滤波后的位置信息
+        # 数组下标到 ID 的映射:
+        #   index 0-4 → 地面机器人 1-5 / 101-105
+        #   index 5   → 哨兵 7 / 107
+        #   index 6   → 空中机器人 6 / 106
+        th_to_id_red = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 7, 6: 6}
+        th_to_id_blue = {0: 101, 1: 102, 2: 103, 3: 104, 4: 105, 5: 107, 6: 106}
         locations = Locations()
         for i in range(len(estimated_locations)):
             location = Location()
             if estimated_locations[i][0] == 0 or estimated_locations[i][2] == 0:
                 continue
             if self.eneny_color == 'Blue':
-                location.id = i + 101
-                if location.id == 106:
-                    location.id = 107
+                location.id = th_to_id_blue.get(i, i + 101)
             elif self.eneny_color == 'Red':
-                location.id = i + 1
-                if location.id == 6:
-                    location.id = 7
+                location.id = th_to_id_red.get(i, i + 1)
+            else:
+                continue
+            # 空中机器人 (id=6 或 106) 用 "Air" 标签区分
+            if location.id in (6, 106):
+                location.label = self.eneny_color
+            else:
+                location.label = self.eneny_color
             location.x = float(estimated_locations[i][0])
             location.y = float(estimated_locations[i][2])
             location.z = float(self.locations_queue[1][i].z)
-            location.label = self.eneny_color
             locations.locs.append(location)
         # 将 NULL 标签机器人直接透传（不经过 EKF 滤波）
         for loc in self.recv_location.locs:

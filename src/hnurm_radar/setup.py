@@ -29,6 +29,8 @@ setup(
             "detector_node = hnurm_radar.lidar_scheme.detector_node:main",
             "radar_node = hnurm_radar.lidar_scheme.radar:main",
             "lidar_node = hnurm_radar.lidar_scheme.lidar_node:main",
+            # 方案三：纯激光雷达空中机器人定位
+            "air_target_node = hnurm_radar.air_scheme.air_target_node:main",
             # 共享节点
             "publish_video = hnurm_radar.shared.publish_video:main",
             "display_panel = hnurm_radar.shared.display_panel:main",

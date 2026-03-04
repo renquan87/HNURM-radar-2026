@@ -74,3 +74,4 @@ test_output/*.jpg
 test_output/*.png
 docs/COORDINATE_TRANSFORM_COMPARISON.md
 docs/COORDINATE_TRANSFORM_EXPLANATION.md
+docs/AIR_TARGET_INTEGRATION.md

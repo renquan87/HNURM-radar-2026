@@ -129,28 +129,30 @@ class CarList:
         self.my_color = cfg["global"]["my_color"] # 我方颜色 , "Red" or "Blue"
         if self.my_color == "Red":
             self.sentinel_id = 7
-            self.enemy_ids = [101, 102, 103, 104, 105, 107]
+            self.enemy_ids = [101, 102, 103, 104, 105, 106, 107]  # 含蓝方空中机器人 106
         else:
             self.sentinel_id = 107
-            self.enemy_ids = [1, 2, 3, 4, 5, 7]
+            self.enemy_ids = [1, 2, 3, 4, 5, 6, 7]  # 含红方空中机器人 6
         self.sentinel_min_alert_distance = 0.1 # 最近预警距离
         self.sentinel_max_alert_distance = 8.0 # 最远预警距离
         self.life_span = cfg["car"]["life_span"] # 车辆信息可信生命周期
-        self.RedCarsID = {1: 1, 2: 2, 3: 3, 4: 4, 5: 5 , 7:7} # 红方车辆序号和车辆ID的对应关系
-        self.BlueCarsID = {1: 101, 2: 102, 3: 103, 4: 104, 5: 105 , 7:107} # 蓝方车辆序号和车辆ID的对应关系
-        self.label2ID = {"R1":1, "R2":2, "R3":3, "R4":4, "R5":5, "R7":7, "B1":101, "B2":102, "B3":103, "B4":104, "B5":105, "B7":107}
+        self.RedCarsID = {1: 1, 2: 2, 3: 3, 4: 4, 5: 5 , 6:6, 7:7} # 红方车辆序号和车辆ID的对应关系（6=空中机器人）
+        self.BlueCarsID = {1: 101, 2: 102, 3: 103, 4: 104, 5: 105 , 6:106, 7:107} # 蓝方车辆序号和车辆ID的对应关系（106=空中机器人）
+        self.label2ID = {"R1":1, "R2":2, "R3":3, "R4":4, "R5":5, "R6":6, "R7":7, "B1":101, "B2":102, "B3":103, "B4":104, "B5":105, "B6":106, "B7":107}
         # 初始化车辆信息
         self.cars = {self.RedCarsID[1]: Car(self.RedCarsID[1], self.life_span),
                      self.RedCarsID[2]: Car(self.RedCarsID[2], self.life_span),
                      self.RedCarsID[3]: Car(self.RedCarsID[3], self.life_span),
                      self.RedCarsID[4]: Car(self.RedCarsID[4], self.life_span),
                      self.RedCarsID[5]: Car(self.RedCarsID[5], self.life_span),
+                     self.RedCarsID[6]: Car(self.RedCarsID[6], self.life_span),  # 红方空中机器人
                      self.RedCarsID[7]: Car(self.RedCarsID[7], self.life_span),
                      self.BlueCarsID[1]: Car(self.BlueCarsID[1], self.life_span),
                      self.BlueCarsID[2]: Car(self.BlueCarsID[2], self.life_span),
                      self.BlueCarsID[3]: Car(self.BlueCarsID[3], self.life_span),
                      self.BlueCarsID[4]: Car(self.BlueCarsID[4], self.life_span),
                      self.BlueCarsID[5]: Car(self.BlueCarsID[5], self.life_span),
+                     self.BlueCarsID[6]: Car(self.BlueCarsID[6], self.life_span),  # 蓝方空中机器人
                      self.BlueCarsID[7]: Car(self.BlueCarsID[7], self.life_span)}
         # 对CarList实例多线程锁，为了尽量减少上锁时间，把数据处理好再写入公共区域
         self.lock = threading.Lock()

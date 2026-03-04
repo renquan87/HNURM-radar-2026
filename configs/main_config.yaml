@@ -47,6 +47,68 @@ communication:
   timex: 0.01 # 超时时间
 
 
+# ============== 空中机器人检测配置（方案三：纯激光雷达） ==============
+air_target:
+  enabled: True                    # 是否启用空中机器人检测
+  publish_rate: 10.0               # 检测发布频率 (Hz)
+
+  # 点云预处理
+  preprocessing:
+    roi:                           # ROI 裁剪范围（雷达坐标系）
+      x_min: -1.0
+      x_max: 30.0
+      y_min: -9.0
+      y_max: 9.0
+      z_min: -3.5
+      z_max: 0.5
+    voxel_size: 0.05               # 体素降采样大小 (m)
+    height_filter:                 # 空中区域高度过滤
+      z_min: -1.5                  # Z 下限（更高的空域）
+      z_max: -0.5                  # Z 上限（较低的空域）
+
+  # DBSCAN 聚类参数
+  clustering:
+    eps: 0.3                       # 邻域半径 (m)
+    min_samples: 5                 # 最小样本数
+    z_zip: 0.5                     # Z 轴压缩系数（HITS 特性）
+
+  # 空中目标筛选参数
+  target_filter:
+    min_points: 5                  # 最小点数
+    max_points: 200                # 最大点数
+    min_size: 0.1                  # 最小尺寸 (m)
+    max_size: 1.5                  # 最大尺寸 (m)
+
+  # 目标跟踪（卡尔曼滤波 + 跨帧关联）
+  tracking:
+    enabled: true
+    max_lost_frames: 10
+    match_distance: 50.0
+    force_combine_dist: 0.5
+    cc_thres: 0.3
+    kalman:
+      q_pos: 0.1
+      q_vel: 0.5
+      q_pv: 0.05
+      r_pos: 0.2
+      r_vel: 1.0
+      decay_rate: 0.1
+      max_velocity: 5.0
+      cov_factor: 0.1
+      stop_p_time: 30
+
+  # 背景减除
+  background:
+    enabled: true
+    voxel_size: 0.15
+    occupy_threshold: 5
+    learning_frames: 10
+
+  # 多帧缓冲
+  buffer:
+    enabled: false
+    frame_count: 3
+
 area: # 每一个area是一个列表，元素为点的二元组，表示一个凹多边形 , 从左上角逆时针 , 赛场是对称的，红方左下为原点0，0，蓝方右上为28，15
   hero_times_threshold: 2 # 连续2帧检测到英雄才认为英雄在这个区域
   send_double_threshold: 10 # 连续10帧检测到英雄启动双倍易伤

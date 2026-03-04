@@ -133,8 +133,6 @@ class RelocaliztionNode : public rclcpp::Node{
 
     bool get_first_tf_from_quatro_ = false;
 
-
-
     teaser::RobustRegistrationSolver::Params params;
     teaser::RobustRegistrationSolver solver(teaser::RobustRegistrationSolver::Params params);
     shared_ptr<quatro<QuatroPointType>> m_quatro_handler = nullptr;
