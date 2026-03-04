@@ -150,7 +150,7 @@ class RelocaliztionNode : public rclcpp::Node{
 
     bool use_quatro_ = false;
     bool use_fixed_ = false;
-   
+
     //quatro++ params
 
 

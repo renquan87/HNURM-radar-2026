@@ -161,7 +161,11 @@ void RelocaliztionNode::reset()
   pre_result_ =  Eigen::Isometry3d::Identity();
   getInitialPose_ = false;
   doFirstRegistration_ = false;
-  // RCLCPP_INFO(get_logger(), "receive new initial pose ,reset");
+  // Reset Quatro state so it re-runs after giving a new initial pose
+  get_first_tf_from_quatro_ = false;
+  accumulation_counter_ = 0;
+  source_cloud_->clear();
+  RCLCPP_WARN(get_logger(), "Reset complete. Quatro will re-run on next initial pose.");
 }
 
 
