@@ -69,8 +69,8 @@ class DisplayPanel(Node):
             #     xx = max(0, min(xx, 2800))
             #     yy = max(0, min(yy, 1500))
                 
-            # 判断是否为空中机器人 (id=6 或 106)
-            is_air_robot = location.id in (6, 106)
+            # 判断是否为空中机器人：正式ID(6/106) + 调试多目标ID段(600+/1600+)
+            is_air_robot = location.id in (6, 106) or location.id >= 600
             air_suffix = " UAV" if is_air_robot else ""
             
             if location.label == 'Red':

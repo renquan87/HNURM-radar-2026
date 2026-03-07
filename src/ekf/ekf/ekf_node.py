@@ -27,6 +27,8 @@ ekf_node.py — 扩展卡尔曼滤波（EKF）节点
   - detect_result.msg — Location / Locations 自定义消息
 """
 
+import os
+
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Int32
@@ -35,6 +37,22 @@ from detect_result.msg import DetectResult
 from detect_result.msg import Robots
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, qos_profile_sensor_data
 from ekf.RobotEKF import RobotEKF
+
+# ---------- 读取 main_config.yaml ----------
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.normpath(os.path.join(_THIS_DIR, '..', '..', '..'))
+_MAIN_CONFIG = os.path.join(_PROJECT_ROOT, 'configs', 'main_config.yaml')
+
+def _load_debug_flag() -> bool:
+    """从 main_config.yaml 读取 global.debug_coordinate_publish 配置。
+    缺省值 False（赛场安全）。"""
+    try:
+        import yaml
+        with open(_MAIN_CONFIG, 'r', encoding='utf-8') as f:
+            cfg = yaml.safe_load(f)
+        return bool(cfg.get('global', {}).get('debug_coordinate_publish', False))
+    except Exception:
+        return False
 
 # 机器人信息类
 class RobotInfo(object):
@@ -57,6 +75,9 @@ class RobotInfo(object):
 
         if last_info.x > 0 and last_info.y > 0:
             t = (self.time - last_info.time) # 转s
+
+            if abs(t) < 1e-6:  # 避免除零
+                return
 
             self.v_x = (self.x - last_info.x) / t
             self.v_y = (self.y - last_info.y) / t
@@ -81,7 +102,17 @@ class EKFNode(Node):
         )
         # 记录敌方颜色
         self.eneny_color = 'NULL'
+        # ── 调试坐标发布开关（从 main_config.yaml 读取）──
+        # True  = 调试: 所有检测坐标都发布（空中ID映射到6/106, 未知ID透传）
+        # False = 赛场: 仅标准ID (1-7/101-107) 经EKF发布, 其余丢弃
+        self.debug_coordinate_publish = _load_debug_flag()
+        self.get_logger().info(
+            f'📋 debug_coordinate_publish = {self.debug_coordinate_publish} '
+            f'{"(调试模式: 全部坐标发布)" if self.debug_coordinate_publish else "(赛场模式: 仅标准ID)"}')
         # 机器人ID映射到数组下标
+        # 地面机器人: 1-5/101-105 → slot 1-5
+        # 哨兵:     7/107       → slot 6
+        # 空中机器人: 6/106       → slot 7
         self.transform_to_th = {
             1: 1,
             2: 2,
@@ -131,7 +162,16 @@ class EKFNode(Node):
         for i in range(len(locations.locs)):
             location = locations.locs[i]
             robot_id = location.id
-            # 跳过 NULL 标签机器人（id=0），不做 EKF 滤波
+            # air_scheme 非严格模式产生的 ID 范围映射
+            if 600 <= robot_id < 1000:
+                if not self.debug_coordinate_publish:
+                    continue            # 赛场模式: 丢弃, 不发裁判系统
+                robot_id = 6            # 调试模式: 映射为红方空中标准 ID
+            elif 1600 <= robot_id < 2000:
+                if not self.debug_coordinate_publish:
+                    continue            # 赛场模式: 丢弃
+                robot_id = 106          # 调试模式: 映射为蓝方空中标准 ID
+            # 跳过 ID 不在映射表中的机器人
             if robot_id not in self.transform_to_th:
                 continue
             x = location.x
@@ -154,13 +194,16 @@ class EKFNode(Node):
             self.kalfilt[i].update_acceleration(self.locations_queue[1][i].a_x, self.locations_queue[1][i].a_y)
             estimated_locations[i] = (self.kalfilt[i].step((self.locations_queue[1][i].x, self.locations_queue[1][i].v_x, self.locations_queue[1][i].y, self.locations_queue[1][i].v_y)))
             
-        # 保存历史位置
+        ## 保存历史位置（每帧更新，用于下一帧速度/加速度计算） 等测试完成之后再考虑优化
         for i in range(len(self.locations_queue[0])):
-            if self.locations_queue[0][i].time == 0:
+            # if self.locations_queue[1][i].time > 0:
+            if self.locations_queue[1][i].time == 0:
                 self.locations_queue[0][i].time = self.locations_queue[1][i].time
                 self.locations_queue[0][i].x = self.locations_queue[1][i].x
                 self.locations_queue[0][i].y = self.locations_queue[1][i].y
                 self.locations_queue[0][i].z = self.locations_queue[1][i].z
+                # self.locations_queue[0][i].v_x = self.locations_queue[1][i].v_x # 等测试完成之后再考虑优化
+                # self.locations_queue[0][i].v_y = self.locations_queue[1][i].v_y # 等测试完成之后再考虑优化
         self.get_logger().info(f"Estimated locations: {estimated_locations}")
         
         # 发布滤波后的位置信息
@@ -190,10 +233,14 @@ class EKFNode(Node):
             location.y = float(estimated_locations[i][2])
             location.z = float(self.locations_queue[1][i].z)
             locations.locs.append(location)
-        # 将 NULL 标签机器人直接透传（不经过 EKF 滤波）
-        for loc in self.recv_location.locs:
-            if loc.id not in self.transform_to_th:
-                locations.locs.append(loc)
+        # 非标准 ID 处理：仅调试模式下透传, 赛场模式全部丢弃
+        if self.debug_coordinate_publish:
+            for loc in self.recv_location.locs:
+                if loc.id not in self.transform_to_th:
+                    # 空中 ID 已在上方映射处理, 此处跳过避免重复
+                    if 600 <= loc.id < 1000 or 1600 <= loc.id < 2000:
+                        continue
+                    locations.locs.append(loc)
         # 通过话题发布
         self.pub_location_filtered.publish(locations)
             

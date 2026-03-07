@@ -6,27 +6,37 @@ air_config.py — 空中机器人检测配置管理
 """
 
 from dataclasses import dataclass, field as dc_field
-from typing import Tuple
 
 
 @dataclass
 class AirROIConfig:
-    """空中目标 ROI 裁剪范围（雷达坐标系）"""
-    x_min: float = -1.0
-    x_max: float = 30.0
-    y_min: float = -9.0
-    y_max: float = 9.0
-    z_min: float = -3.5
-    z_max: float = 0.5
+    """空中目标 ROI 裁剪范围（雷达坐标系：X=前方, Y=左方, Z=上方, 右手系）"""
+    x_min: float = -1.0    # 前后方向（X）下限；负值=雷达后方
+    x_max: float = 30.0    # 前后方向（X）上限
+    y_min: float = -9.0    # 左右方向（Y）下限；负值=右方
+    y_max: float = 9.0     # 左右方向（Y）上限
+    z_min: float = -3.5   # 赛场默认；实验室用 -1.3（需低于地面供 BG 学习）
+    z_max: float = 0.5     # 赛场默认；实验室用 0.3
 
 
 @dataclass
 class AirHeightFilterConfig:
     """空中目标高度过滤参数
-    雷达坐标系中 Z 轴向下为负，空中目标 Z 值在 z_min ~ z_max 之间
+    雷达坐标系中 LiDAR 在 Z=0，Z 轴向上为正。
+    更负 = 更低（接近地面），更接近 0 = 更高（接近 LiDAR）。
+    空中目标 Z 值在 z_min ~ z_max 之间。
     """
-    z_min: float = -1.5   # 离雷达更远（更高）
-    z_max: float = -0.5   # 离雷达更近（较低）
+    z_min: float = -1.5   # 飞行区域 Z 下界（更接近地面）；赛场默认，实验室用 -1.0
+    z_max: float = -0.5   # 飞行区域 Z 上界（更接近 LiDAR）；赛场默认，实验室用 -0.35
+
+
+@dataclass
+class AirAdaptiveHeightConfig:
+    """高度自适应过滤参数"""
+    enabled: bool = False
+    margin: float = 0.25
+    min_span: float = 0.5
+    max_span: float = 2.0
 
 
 @dataclass
@@ -35,6 +45,7 @@ class AirPreprocessConfig:
     roi: AirROIConfig = dc_field(default_factory=AirROIConfig)
     voxel_size: float = 0.05
     height_filter: AirHeightFilterConfig = dc_field(default_factory=AirHeightFilterConfig)
+    adaptive_height: AirAdaptiveHeightConfig = dc_field(default_factory=AirAdaptiveHeightConfig)
 
 
 @dataclass
@@ -43,6 +54,11 @@ class AirClusterConfig:
     eps: float = 0.3
     min_samples: int = 5
     z_zip: float = 0.5     # Z 轴压缩系数（HITS 特性）
+    backend: str = "open3d"  # open3d | sklearn
+    split_merged: bool = True
+    split_size_xy: float = 1.0
+    split_min_gap: float = 0.25
+    split_min_points: int = 12
 
 
 @dataclass
@@ -52,31 +68,47 @@ class AirTargetFilterConfig:
     max_points: int = 200
     min_size: float = 0.1
     max_size: float = 1.5
+    confidence_threshold: float = 0.0
 
 
 @dataclass
 class AirKalmanConfig:
-    """卡尔曼滤波器参数"""
-    q_pos: float = 0.1
-    q_vel: float = 0.5
-    q_pv: float = 0.05
-    r_pos: float = 0.2
-    r_vel: float = 1.0
-    decay_rate: float = 0.1
-    max_velocity: float = 5.0
-    cov_factor: float = 0.1
-    stop_p_time: int = 30
+    """卡尔曼滤波器参数（对齐 HITS KalmanFilter.cpp 默认值）"""
+    q_pos: float = 1e-7
+    q_vel: float = 5e-6
+    q_pv: float = 5e-6
+    r_pos: float = 5e-2
+    r_vel: float = 5e-2
+    decay_rate: float = 1e-4
+    max_velocity: float = 10.0
+    cov_factor: float = 2.5
+    stop_p_time: int = 40
+    init_p_times: int = 20
 
 
 @dataclass
 class AirTrackingConfig:
     """目标跟踪参数"""
     enabled: bool = True
-    max_lost_frames: int = 10
-    match_distance: float = 50.0
+    max_lost_frames: int = 120
+    match_distance: float = 6.0
     force_combine_dist: float = 0.5
-    cc_thres: float = 0.3
+    cc_thres: float = 0.05
+    combine_limit: int = 15
+    separate_limit: int = 8
+    confirm_frames: int = 2
     kalman: AirKalmanConfig = dc_field(default_factory=AirKalmanConfig)
+
+
+@dataclass
+class AirLooseQueryConfig:
+    """丢失目标松弛查询参数（HITS loose query）"""
+    enabled: bool = True
+    max_lost_frames: int = 5
+    expand_xy: float = 1.0
+    expand_z: float = 0.5
+    eps_scale: float = 1.4
+    min_samples_scale: float = 0.6
 
 
 @dataclass
@@ -86,6 +118,7 @@ class AirBackgroundConfig:
     voxel_size: float = 0.15
     occupy_threshold: int = 5
     learning_frames: int = 10
+    bg_pcd_file: str = ""   # 预建背景PCD路径（空=在线学习, 设为场景PCD可跳过学习）
 
 
 @dataclass
@@ -103,9 +136,13 @@ class AirTargetConfig:
     clustering: AirClusterConfig = dc_field(default_factory=AirClusterConfig)
     target_filter: AirTargetFilterConfig = dc_field(default_factory=AirTargetFilterConfig)
     tracking: AirTrackingConfig = dc_field(default_factory=AirTrackingConfig)
+    loose_query: AirLooseQueryConfig = dc_field(default_factory=AirLooseQueryConfig)
     background: AirBackgroundConfig = dc_field(default_factory=AirBackgroundConfig)
     buffer: AirBufferConfig = dc_field(default_factory=AirBufferConfig)
     publish_rate: float = 10.0  # 发布频率 Hz
+    strict_dual_uav: bool = False
+    max_targets: int = 0
+    field_split_x: float = 14.0
 
 
 def load_air_target_config(cfg: dict) -> AirTargetConfig:
@@ -124,11 +161,15 @@ def load_air_target_config(cfg: dict) -> AirTargetConfig:
     result = AirTargetConfig()
     result.enabled = at.get("enabled", True)
     result.publish_rate = at.get("publish_rate", 10.0)
+    result.strict_dual_uav = at.get("strict_dual_uav", False)
+    result.max_targets = at.get("max_targets", 0)
+    result.field_split_x = at.get("field_split_x", 14.0)
 
     # 预处理
     prep = at.get("preprocessing", {})
     roi = prep.get("roi", {})
     hf = prep.get("height_filter", {})
+    ah = prep.get("adaptive_height", {})
     result.preprocessing = AirPreprocessConfig(
         roi=AirROIConfig(
             x_min=roi.get("x_min", -1.0),
@@ -143,6 +184,12 @@ def load_air_target_config(cfg: dict) -> AirTargetConfig:
             z_min=hf.get("z_min", -1.5),
             z_max=hf.get("z_max", -0.5),
         ),
+        adaptive_height=AirAdaptiveHeightConfig(
+            enabled=ah.get("enabled", False),
+            margin=ah.get("margin", 0.25),
+            min_span=ah.get("min_span", 0.5),
+            max_span=ah.get("max_span", 2.0),
+        ),
     )
 
     # 聚类
@@ -151,6 +198,11 @@ def load_air_target_config(cfg: dict) -> AirTargetConfig:
         eps=cl.get("eps", 0.3),
         min_samples=cl.get("min_samples", 5),
         z_zip=cl.get("z_zip", 0.5),
+        backend=cl.get("backend", "open3d"),
+        split_merged=cl.get("split_merged", True),
+        split_size_xy=cl.get("split_size_xy", 1.0),
+        split_min_gap=cl.get("split_min_gap", 0.25),
+        split_min_points=cl.get("split_min_points", 12),
     )
 
     # 目标筛选
@@ -160,6 +212,7 @@ def load_air_target_config(cfg: dict) -> AirTargetConfig:
         max_points=tf.get("max_points", 200),
         min_size=tf.get("min_size", 0.1),
         max_size=tf.get("max_size", 1.5),
+        confidence_threshold=tf.get("confidence_threshold", 0.0),
     )
 
     # 跟踪
@@ -167,21 +220,36 @@ def load_air_target_config(cfg: dict) -> AirTargetConfig:
     kp = tr.get("kalman", {})
     result.tracking = AirTrackingConfig(
         enabled=tr.get("enabled", True),
-        max_lost_frames=tr.get("max_lost_frames", 10),
-        match_distance=tr.get("match_distance", 50.0),
+        max_lost_frames=tr.get("max_lost_frames", 120),
+        match_distance=tr.get("match_distance", 6.0),
         force_combine_dist=tr.get("force_combine_dist", 0.5),
-        cc_thres=tr.get("cc_thres", 0.3),
+        cc_thres=tr.get("cc_thres", 0.05),
+        combine_limit=tr.get("combine_limit", 15),
+        separate_limit=tr.get("separate_limit", 8),
+        confirm_frames=tr.get("confirm_frames", 2),
         kalman=AirKalmanConfig(
-            q_pos=kp.get("q_pos", 0.1),
-            q_vel=kp.get("q_vel", 0.5),
-            q_pv=kp.get("q_pv", 0.05),
-            r_pos=kp.get("r_pos", 0.2),
-            r_vel=kp.get("r_vel", 1.0),
-            decay_rate=kp.get("decay_rate", 0.1),
-            max_velocity=kp.get("max_velocity", 5.0),
-            cov_factor=kp.get("cov_factor", 0.1),
-            stop_p_time=kp.get("stop_p_time", 30),
+            q_pos=kp.get("q_pos", 1e-7),
+            q_vel=kp.get("q_vel", 5e-6),
+            q_pv=kp.get("q_pv", 5e-6),
+            r_pos=kp.get("r_pos", 5e-2),
+            r_vel=kp.get("r_vel", 5e-2),
+            decay_rate=kp.get("decay_rate", 1e-4),
+            max_velocity=kp.get("max_velocity", 10.0),
+            cov_factor=kp.get("cov_factor", 2.5),
+            stop_p_time=kp.get("stop_p_time", 40),
+            init_p_times=kp.get("init_p_times", 20),
         ),
+    )
+
+    # 松弛查询
+    lq = at.get("loose_query", {})
+    result.loose_query = AirLooseQueryConfig(
+        enabled=lq.get("enabled", True),
+        max_lost_frames=lq.get("max_lost_frames", 5),
+        expand_xy=lq.get("expand_xy", 1.0),
+        expand_z=lq.get("expand_z", 0.5),
+        eps_scale=lq.get("eps_scale", 1.4),
+        min_samples_scale=lq.get("min_samples_scale", 0.6),
     )
 
     # 背景减除
@@ -191,6 +259,7 @@ def load_air_target_config(cfg: dict) -> AirTargetConfig:
         voxel_size=bg.get("voxel_size", 0.15),
         occupy_threshold=bg.get("occupy_threshold", 5),
         learning_frames=bg.get("learning_frames", 10),
+        bg_pcd_file=bg.get("bg_pcd_file", ""),
     )
 
     # 多帧缓冲
