@@ -522,6 +522,7 @@ class AirTargetNode(Node):
             # Debug 中间数据（供 _publish_debug 使用）
             "_pcd_filtered": pcd_filtered,
             "_targets": targets,
+            "_all_clusters": all_clusters,
         }
         return out_locations, stats
 
@@ -569,24 +570,36 @@ class AirTargetNode(Node):
             msg.is_dense = True
             self.pub_debug_air.publish(msg)
 
-        # 2) 聚类点云（RGB 着色 — 每个聚类一种颜色，RViz Color Transformer 选 "RGB8"）
+        # 2) 聚类点云（所有聚类可视化：通过筛选=彩色, 拒绝=暗红色）
+        #    RViz Color Transformer 选 "RGB8"
         targets = stats.get('_targets', [])
-        if targets:
-            # 预计算每种聚类颜色的 packed RGB float32（PCL 标准格式）
-            rgb_floats = []
+        all_clusters = stats.get('_all_clusters', [])
+        accepted_ids = {id(t.points) for t in targets}
+
+        if all_clusters:
+            # 预计算通过筛选的聚类颜色（彩色循环）
+            rgb_floats_ok = []
             for c in self._CLUSTER_COLORS:
                 r, g, b = int(c[0]*255), int(c[1]*255), int(c[2]*255)
                 rgb_int = (r << 16) | (g << 8) | b
-                rgb_floats.append(
+                rgb_floats_ok.append(
                     struct.unpack('f', struct.pack('I', rgb_int))[0]
                 )
+            # 被拒绝的聚类统一用暗红色
+            _rej_rgb_int = (180 << 16) | (60 << 8) | 60
+            rej_rgb_float = struct.unpack('f', struct.pack('I', _rej_rgb_int))[0]
 
             parts = []
-            for i, t in enumerate(targets):
-                cpts = np.asarray(t.points, dtype=np.float32)
-                rgb_val = rgb_floats[i % len(rgb_floats)]
-                rgbs = np.full((len(cpts), 1), rgb_val, dtype=np.float32)
-                parts.append(np.hstack([cpts, rgbs]))
+            acc_color_idx = 0
+            for cpts in all_clusters:
+                pts_f32 = np.asarray(cpts, dtype=np.float32)
+                if id(cpts) in accepted_ids:
+                    rgb_val = rgb_floats_ok[acc_color_idx % len(rgb_floats_ok)]
+                    acc_color_idx += 1
+                else:
+                    rgb_val = rej_rgb_float
+                rgbs = np.full((len(pts_f32), 1), rgb_val, dtype=np.float32)
+                parts.append(np.hstack([pts_f32, rgbs]))
             all_pts = np.ascontiguousarray(np.vstack(parts))
             msg = PointCloud2()
             msg.header = header
@@ -603,33 +616,47 @@ class AirTargetNode(Node):
             msg.is_dense = True
             self.pub_debug_clusters.publish(msg)
 
-        # 3) 包围盒 + 文本标注 (MarkerArray)
-        if _HAS_VIZ_MARKERS and hasattr(self, 'pub_debug_markers') and targets:
+        # 3) 包围盒 + 文本标注 (MarkerArray) — 显示所有聚类
+        #    通过筛选 = 绿色盒子 + ✓ 标签, 被拒绝 = 红色盒子 + ✗ 标签
+        if _HAS_VIZ_MARKERS and hasattr(self, 'pub_debug_markers'):
+            target_map = {id(t.points): t for t in targets}
             ma = MarkerArray()
             clr = Marker()
             clr.header = header
             clr.ns = 'air_clusters'
             clr.action = Marker.DELETEALL
             ma.markers.append(clr)
-            for i, t in enumerate(targets):
-                c = self._CLUSTER_COLORS[i % len(self._CLUSTER_COLORS)]
+            for i, cpts in enumerate(all_clusters):
+                is_ok = id(cpts) in accepted_ids
+                t = target_map.get(id(cpts))
+                center   = t.center   if t else cpts.mean(axis=0)
+                bbox_min = t.bbox_min if t else cpts.min(axis=0)
+                bbox_max = t.bbox_max if t else cpts.max(axis=0)
+                n_pts    = t.num_points if t else len(cpts)
+                conf     = t.confidence if t else 0.0
+
+                # 包围盒
                 m = Marker()
                 m.header = header
                 m.ns = 'air_bbox'
                 m.id = i
                 m.type = Marker.CUBE
                 m.action = Marker.ADD
-                m.pose.position.x = float((t.bbox_min[0] + t.bbox_max[0]) / 2)
-                m.pose.position.y = float((t.bbox_min[1] + t.bbox_max[1]) / 2)
-                m.pose.position.z = float((t.bbox_min[2] + t.bbox_max[2]) / 2)
+                m.pose.position.x = float((bbox_min[0] + bbox_max[0]) / 2)
+                m.pose.position.y = float((bbox_min[1] + bbox_max[1]) / 2)
+                m.pose.position.z = float((bbox_min[2] + bbox_max[2]) / 2)
                 m.pose.orientation.w = 1.0
-                m.scale.x = float(max(t.bbox_max[0] - t.bbox_min[0], 0.05))
-                m.scale.y = float(max(t.bbox_max[1] - t.bbox_min[1], 0.05))
-                m.scale.z = float(max(t.bbox_max[2] - t.bbox_min[2], 0.05))
-                m.color.r, m.color.g, m.color.b = [float(v) for v in c]
+                m.scale.x = float(max(bbox_max[0] - bbox_min[0], 0.05))
+                m.scale.y = float(max(bbox_max[1] - bbox_min[1], 0.05))
+                m.scale.z = float(max(bbox_max[2] - bbox_min[2], 0.05))
+                if is_ok:
+                    m.color.r, m.color.g, m.color.b = 0.2, 0.9, 0.2   # 绿色
+                else:
+                    m.color.r, m.color.g, m.color.b = 0.9, 0.2, 0.2   # 红色
                 m.color.a = 0.35
                 m.lifetime.sec = 1
                 ma.markers.append(m)
+
                 # 文本标注
                 txt = Marker()
                 txt.header = header
@@ -637,13 +664,18 @@ class AirTargetNode(Node):
                 txt.id = i
                 txt.type = Marker.TEXT_VIEW_FACING
                 txt.action = Marker.ADD
-                txt.pose.position.x = float(t.center[0])
-                txt.pose.position.y = float(t.center[1])
-                txt.pose.position.z = float(t.center[2]) - 0.3
+                txt.pose.position.x = float(center[0])
+                txt.pose.position.y = float(center[1])
+                txt.pose.position.z = float(center[2]) - 0.3
                 txt.scale.z = 0.15
                 txt.color.r = txt.color.g = txt.color.b = 1.0
                 txt.color.a = 1.0
-                txt.text = f'#{i} n={t.num_points} conf={t.confidence:.2f}'
+                if is_ok:
+                    txt.text = f'#{i} n={n_pts} conf={conf:.2f} \u2713'
+                else:
+                    sz = bbox_max - bbox_min
+                    max_dim = float(sz.max())
+                    txt.text = f'#{i} n={n_pts} sz={max_dim:.1f} \u2717'
                 txt.lifetime.sec = 1
                 ma.markers.append(txt)
             self.pub_debug_markers.publish(ma)
