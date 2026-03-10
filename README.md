@@ -109,8 +109,6 @@ ros2 run ekf ekf_node
 # === 终端 3：裁判系统串口通信 ===
 ros2 run hnurm_radar judge_messager
 
-# === 终端 4（可选）：小地图可视化面板 ===
-ros2 run hnurm_radar display_panel
 ```
 
 ### 相机输入模式

@@ -32,8 +32,8 @@ scenes:
 
 # 相机输入配置（仅用于纯相机透视变换方案 camera_detector）
 camera:
-  mode: "hik"               # "test": 测试模式(静态图片) | "video": USB摄像头/视频文件 | "hik": 海康工业相机
-  video_source: 0             # video 模式下的输入源：0=USB摄像头, 或视频文件路径如 "/path/to/video.mp4"
+  mode: "video"               # "test": 测试模式(静态图片) | "video": USB摄像头/视频文件 | "hik": 海康工业相机
+  video_source: /data/projects/radar/hnurm_radar/test_resources/7.27-华东理工.mp4             # video 模式下的输入源：0=USB摄像头, 或视频文件路径如 "/path/to/video.mp4"
   test_image: "test_resources/red1.png"  # test 模式下使用的图片路径（相对于项目根目录）
 
 

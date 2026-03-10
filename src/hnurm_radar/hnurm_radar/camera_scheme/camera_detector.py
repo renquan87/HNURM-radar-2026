@@ -190,7 +190,8 @@ class CameraDetector(Node):
         self.kf_wrapper = KalmanFilterWrapper(
             process_noise=float(filter_cfg.get('process_noise', 1e-2)),
             measurement_noise=float(filter_cfg.get('measurement_noise', 1e-1)),
-            jump_threshold=float(filter_cfg.get('jump_threshold', 3.0)),
+            jump_threshold=float(filter_cfg.get('jump_threshold', 1.0)),
+            max_velocity=float(filter_cfg.get('max_velocity', 5.0)),
             max_inactive_time=float(filter_cfg.get('max_inactive_time', 3.0)),
         )
         self._cleanup_counter = 0
@@ -354,6 +355,17 @@ class CameraDetector(Node):
         map_x = transformed[0][0][0]
         map_y = transformed[0][0][1]
 
+        # ★ 异常值检测：地图像素坐标超出合理范围则返回 None
+        # 允许一定的边界外扩，但不能太离谱
+        margin = 500  # 像素边界外扩
+        if self.calib_map_w is not None:
+            if (map_x < -margin or map_x > self.calib_map_w + margin or
+                map_y < -margin or map_y > self.calib_map_h + margin):
+                if self.is_debug:
+                    self.get_logger().warn(
+                        f"透视变换异常: px=({px:.0f},{py:.0f}) → map=({map_x:.1f},{map_y:.1f}) 超出范围")
+                return None
+
         # Step 2: 查掩码判定高度层（直接用地图像素坐标查掩码）
         if self.mask_img is not None and self.H_highland is not None:
             mask_h, mask_w = self.mask_img.shape[:2]
@@ -382,6 +394,13 @@ class CameraDetector(Node):
                 transformed_h = cv2.perspectiveTransform(pt, self.H_highland)
                 map_x = transformed_h[0][0][0]
                 map_y = transformed_h[0][0][1]
+                # 高地层变换后也要检查范围
+                if (map_x < -margin or map_x > self.calib_map_w + margin or
+                    map_y < -margin or map_y > self.calib_map_h + margin):
+                    if self.is_debug:
+                        self.get_logger().warn(
+                            f"高地层透视变换异常: px=({px:.0f},{py:.0f}) → map=({map_x:.1f},{map_y:.1f})")
+                    return None
 
         # Step 3: 地图像素 → 赛场米坐标
         fx, fy = self._map_pixel_to_field(map_x, map_y)
@@ -424,6 +443,9 @@ class CameraDetector(Node):
                     ret, cam_frame = self.video_cap.read()
                     if not ret:
                         cam_frame = None
+                    # ★ 重置跟踪器和滤波器状态，避免状态残留
+                    self._reset_tracking_state()
+                time.sleep(0.033)  # 30fps 视频帧率控制
 
             if cam_frame is not None:
                 with self._frame_lock:
@@ -436,6 +458,28 @@ class CameraDetector(Node):
             if self.frame is None:
                 return None
             return self.frame.copy()
+
+    def _reset_tracking_state(self):
+        """
+        重置跟踪器和滤波器状态。
+        在视频循环播放时调用，避免状态残留导致坐标错误。
+        """
+        # 重置卡尔曼滤波器
+        self.kf_wrapper.reset()
+
+        # 重置跟踪投票表和状态
+        for i in range(10000):
+            self.Track_value[i] = [0] * self.class_num
+            self.Status[i] = 0
+        self.id_candidate = [0] * 10000
+
+        # 重置 ByteTrack 跟踪器（通过清除 predictor 中的 trackers）
+        if hasattr(self.model_car, 'predictor') and self.model_car.predictor is not None:
+            if hasattr(self.model_car.predictor, 'trackers'):
+                self.model_car.predictor.trackers = None
+
+        if self.is_debug:
+            self.get_logger().info("跟踪器和滤波器状态已重置")
 
     # ================================================================
     #  YOLO 推理（复用已有 detector_node 的三阶段逻辑）

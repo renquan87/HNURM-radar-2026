@@ -14,9 +14,10 @@ params:
 
 # 坐标卡尔曼滤波器参数
 filter:
-  process_noise: 0.01          # 过程噪声系数（越小越平滑，响应越慢）
-  measurement_noise: 0.1       # 观测噪声系数（越大越信赖预测值）
-  jump_threshold: 3.0          # 单帧跳变阈值 (m)，超过则拒绝更新
+  process_noise: 0.005         # 过程噪声系数（越小越平滑，响应越慢）
+  measurement_noise: 0.15      # 观测噪声系数（越大越信赖预测值）
+  jump_threshold: 1.0          # 单帧跳变阈值 (m)，超过则拒绝更新
+  max_velocity: 5.0            # 最大移动速度 (m/s)，超过则拒绝观测
   max_inactive_time: 3.0       # 滤波器超时清理时间 (s)
 
 is_record: true

@@ -95,7 +95,7 @@ def video_capture_thread(source=0):
         ret, img = cap.read()
         if ret:
             camera_image = img
-        time.sleep(0.016)  # ~60fps
+        time.sleep(0.033)  # ~30fps
 
 
 # ======================== 高度层颜色 ========================

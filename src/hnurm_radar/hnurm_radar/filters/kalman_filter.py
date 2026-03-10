@@ -10,6 +10,8 @@ kalman_filter.py — 增强型卡尔曼滤波器，用于赛场坐标平滑
 特性:
   - 动态过程噪声: 位移越大，速度噪声越大
   - 异常值检测: 单帧跳变超过阈值时拒绝更新
+  - 速度约束: 观测隐含速度超过最大速度时拒绝
+  - 连续异常检测: 连续异常帧过多时重置滤波器
   - 超时清理: 长时间未更新的滤波器自动移除
   - 首帧直接初始化（不滤波）
 """
@@ -26,11 +28,12 @@ class EnhancedKalmanFilter:
     参数:
         process_noise:      过程噪声系数 (默认 1e-2)
         measurement_noise:  观测噪声系数 (默认 1e-1)
-        jump_threshold:     单帧跳变阈值 (m)，超过则拒绝更新 (默认 3.0)
+        jump_threshold:     单帧跳变阈值 (m)，超过则拒绝更新 (默认 1.0)
+        max_velocity:       最大移动速度 (m/s)，超过则拒绝观测 (默认 5.0)
     """
 
     def __init__(self, process_noise=1e-2, measurement_noise=1e-1,
-                 jump_threshold=3.0):
+                 jump_threshold=1.0, max_velocity=5.0):
         self.kf = cv2.KalmanFilter(4, 2)  # 4 状态, 2 观测
 
         # 状态转移矩阵 (匀速模型, dt=1)
@@ -58,9 +61,14 @@ class EnhancedKalmanFilter:
         self.kf.errorCovPost = np.eye(4, dtype=np.float32)
 
         self.jump_threshold = jump_threshold
+        self.max_velocity = max_velocity
         self.initialized = False
         self.last_update_time = time.time()
         self.last_position = None
+
+        # 连续异常计数器
+        self.consecutive_anomalies = 0
+        self.max_consecutive_anomalies = 5  # 连续5帧异常则重置
 
     def init_state(self, x, y):
         """首帧初始化：直接设定位置，速度为 0"""
@@ -69,11 +77,17 @@ class EnhancedKalmanFilter:
         self.initialized = True
         self.last_update_time = time.time()
         self.last_position = np.array([x, y])
+        self.consecutive_anomalies = 0
+
+    def reset_state(self, x, y):
+        """重置滤波器状态"""
+        self.init_state(x, y)
 
     def update(self, x, y):
         """
         输入新观测值，返回滤波后的 (x, y)。
         如果检测到异常跳变，返回预测值而非观测值。
+        连续异常过多时重置滤波器。
 
         返回:
             (filtered_x, filtered_y): 滤波后坐标
@@ -86,6 +100,24 @@ class EnhancedKalmanFilter:
         dt = now - self.last_update_time
         dt = max(dt, 0.01)  # 下限保护
         dt = min(dt, 2.0)   # 上限保护（长时间未更新）
+
+        # ★ 速度约束检测：观测隐含速度是否超过最大速度
+        if self.last_position is not None:
+            obs_velocity = np.sqrt((x - self.last_position[0]) ** 2 +
+                                   (y - self.last_position[1]) ** 2) / dt
+            if obs_velocity > self.max_velocity:
+                # 速度异常 → 拒绝观测，使用预测值
+                self.consecutive_anomalies += 1
+                if self.consecutive_anomalies >= self.max_consecutive_anomalies:
+                    # 连续异常过多，重置滤波器
+                    self.init_state(x, y)
+                    return x, y
+                # 更新状态转移矩阵并预测
+                self.kf.transitionMatrix[0, 2] = dt
+                self.kf.transitionMatrix[1, 3] = dt
+                predicted = self.kf.predict()
+                self.last_update_time = now
+                return float(predicted[0, 0]), float(predicted[1, 0])
 
         # 更新状态转移矩阵中的 dt
         self.kf.transitionMatrix[0, 2] = dt
@@ -101,8 +133,16 @@ class EnhancedKalmanFilter:
 
         if distance > self.jump_threshold:
             # 跳变过大 → 仅使用预测值，不修正
+            self.consecutive_anomalies += 1
+            if self.consecutive_anomalies >= self.max_consecutive_anomalies:
+                # 连续异常过多，重置滤波器
+                self.init_state(x, y)
+                return x, y
             self.last_update_time = now
             return float(pred_x), float(pred_y)
+
+        # 观测正常，重置异常计数器
+        self.consecutive_anomalies = 0
 
         # 动态调整过程噪声（位移大 → 速度分量噪声更大）
         displacement = 0.0
@@ -156,15 +196,17 @@ class KalmanFilterWrapper:
         process_noise:      过程噪声系数
         measurement_noise:  观测噪声系数
         jump_threshold:     单帧跳变阈值 (m)
+        max_velocity:       最大移动速度 (m/s)
         max_inactive_time:  滤波器最长不活跃时间 (s)，超过则移除
     """
 
     def __init__(self, process_noise=1e-2, measurement_noise=1e-1,
-                 jump_threshold=3.0, max_inactive_time=3.0):
+                 jump_threshold=1.0, max_velocity=5.0, max_inactive_time=3.0):
         self.filters = {}  # car_id → EnhancedKalmanFilter
         self.process_noise = process_noise
         self.measurement_noise = measurement_noise
         self.jump_threshold = jump_threshold
+        self.max_velocity = max_velocity
         self.max_inactive_time = max_inactive_time
 
     def update(self, car_id, x, y):
@@ -182,7 +224,8 @@ class KalmanFilterWrapper:
             self.filters[car_id] = EnhancedKalmanFilter(
                 process_noise=self.process_noise,
                 measurement_noise=self.measurement_noise,
-                jump_threshold=self.jump_threshold
+                jump_threshold=self.jump_threshold,
+                max_velocity=self.max_velocity
             )
         return self.filters[car_id].update(x, y)
 
