@@ -159,19 +159,19 @@ bash bringup.sh
 在 3 个终端中**按顺序**执行：
 
 ```bash
-# === 终端 1：激光雷达驱动（必须最先启动，提供点云数据）===
+# === 终端 1：激光雷达驱动（必须最先启动，提供原始点云 /livox/lidar）===
 ros2 launch livox_ros_driver2 rviz_HAP_launch.py
 
-# === 终端 2：ICP 点云配准（必须在雷达驱动之后、其他节点之前启动）===
+# === 终端 2：主节点组（一次性启动 6 个节点，其中 lidar_node 会发布 /lidar_pcds）===
+ros2 launch hnurm_bringup hnurm_radar_launch.py
+
+# === 终端 3：ICP 点云配准（必须在终端 2 之后，因为它订阅 /lidar_pcds）===
 ros2 launch registration registration.launch.py
 # ⚠ 启动后在弹出的 RViz 中点击 "2D Pose Estimate"，在点云地图上拖拽给出初始位姿
-# 等待 registration 配准成功（error 值明显下降）后再启动下一步
-
-# === 终端 3：主节点组（一次性启动 6 个节点）===
-ros2 launch hnurm_bringup hnurm_radar_launch.py
+# 等待 registration 配准成功（error 值明显下降），此后 radar_node 即可获取 TF
 ```
 
-> ⚠ **启动顺序很重要**：雷达驱动 → registration（+ 手动给 2D Pose Estimate）→ 主节点组。如果顺序错误，`radar_node` 会因为缺少 TF 变换或点云数据而报错。
+> ⚠ **启动顺序很重要**：雷达驱动 → 主节点组（含 `lidar_node`，发布 `/lidar_pcds`）→ registration（+ 手动给 2D Pose Estimate）。`registration` 订阅的是 `/lidar_pcds` 而非 `/livox/lidar`，如果在 `lidar_node` 之前启动，会因无数据卡在 `waiting for quatro++ calculation`。
 
 `hnurm_radar_launch.py` 一次启动的 6 个节点：
 
@@ -189,15 +189,15 @@ ros2 launch hnurm_bringup hnurm_radar_launch.py
 适用于需要单独调试某个节点的情况。**按以下顺序启动**：
 
 ```bash
-# === 终端 1：激光雷达驱动（最先启动）===
+# === 终端 1：激光雷达驱动（最先启动，发布 /livox/lidar）===
 ros2 launch livox_ros_driver2 rviz_HAP_launch.py
 
-# === 终端 2：ICP 点云配准 ===
+# === 终端 2：激光雷达数据接收（订阅 /livox/lidar，发布 /lidar_pcds）===
+ros2 run hnurm_radar lidar_node
+
+# === 终端 3：ICP 点云配准（订阅 /lidar_pcds，必须在 lidar_node 之后启动）===
 ros2 launch registration registration.launch.py
 # ⚠ 在 RViz 中点击 "2D Pose Estimate"，拖拽给出初始位姿，等待配准成功
-
-# === 终端 3：激光雷达数据接收 ===
-ros2 run hnurm_radar lidar_node
 
 # === 终端 4：YOLO 目标检测 ===
 ros2 run hnurm_radar detector_node
@@ -240,15 +240,15 @@ ros2 launch hnurm_bringup hnurm_radar_video_launch.py
 在 3 个终端中**按顺序**执行：
 
 ```bash
-# === 终端 1：激光雷达驱动（最先启动）===
+# === 终端 1：激光雷达驱动（最先启动，发布 /livox/lidar）===
 ros2 launch livox_ros_driver2 rviz_HAP_launch.py
 
-# === 终端 2：ICP 点云配准（必须，提供 map TF 变换）===
+# === 终端 2：空中方案主节点组（含 lidar_node，发布 /lidar_pcds）===
+ros2 launch hnurm_bringup hnurm_air_launch.py
+
+# === 终端 3：ICP 点云配准（订阅 /lidar_pcds，必须在终端 2 之后启动）===
 ros2 launch registration registration.launch.py
 # ⚠ 在 RViz 中点击 "2D Pose Estimate"，拖拽给出初始位姿，等待配准成功
-
-# === 终端 3：空中方案主节点组 ===
-ros2 launch hnurm_bringup hnurm_air_launch.py
 ```
 
 `hnurm_air_launch.py` 一次启动的 4 个节点：
@@ -265,15 +265,15 @@ ros2 launch hnurm_bringup hnurm_air_launch.py
 **必须按以下顺序启动**：
 
 ```bash
-# === 终端 1：激光雷达驱动（最先启动）===
+# === 终端 1：激光雷达驱动（最先启动，发布 /livox/lidar）===
 ros2 launch livox_ros_driver2 rviz_HAP_launch.py
 
-# === 终端 2：ICP 点云配准（必须，提供 map TF 变换）===
+# === 终端 2：激光雷达数据接收（订阅 /livox/lidar，发布 /lidar_pcds）===
+ros2 run hnurm_radar lidar_node
+
+# === 终端 3：ICP 点云配准（订阅 /lidar_pcds，必须在 lidar_node 之后启动）===
 ros2 launch registration registration.launch.py
 # ⚠ 在 RViz 中点击 "2D Pose Estimate"，拖拽给出初始位姿，等待配准成功
-
-# === 终端 3：激光雷达数据接收 ===
-ros2 run hnurm_radar lidar_node
 
 # === 终端 4：空中目标检测 ===
 ros2 run hnurm_radar air_target_node
@@ -382,15 +382,15 @@ ros2 bag play <bag_directory>
 
 | 脚本 | 用途 | 使用方式 |
 |------|------|---------|
-| `scripts/air_param_search.py` | 空中方案 DBSCAN 参数网格搜索自动调优 | `python scripts/air_param_search.py` |
-| `scripts/air_snapshot.py` | 保存空中检测结果 PCD 快照 | `python scripts/air_snapshot.py` |
-| `scripts/air_visualize.py` | Open3D 可视化空中目标聚类结果 | `python scripts/air_visualize.py` |
-| `scripts/align_pcd.py` | 交互式点云-地图对齐工具 | `python scripts/align_pcd.py` |
-| `scripts/bev_calib.py` | BEV 地图坐标系交互式标定 | `python scripts/bev_calib.py` |
-| `scripts/get_coord.py` | 地图像素坐标查看小工具 | `python scripts/get_coord.py` |
-| `scripts/lab_map.py` | 实验室地图裁剪与坐标系建立 | `python scripts/lab_map.py` |
-| `scripts/yolo_test.py` | YOLO 三阶段推理效果测试 | `python scripts/yolo_test.py` |
-| `scripts/tracking_test.py` | 空中目标跟踪鲁棒性验证 | `python scripts/tracking_test.py` |
+| `scripts/air_param_grid_search.py` | 空中方案 DBSCAN 参数网格搜索自动调优 | `python scripts/air_param_grid_search.py` |
+| `scripts/air_save_debug_pcd.py` | 保存空中检测结果 PCD 快照 | `python scripts/air_save_debug_pcd.py` |
+| `scripts/air_visualize_clusters.py` | Open3D 可视化空中目标聚类结果 | `python scripts/air_visualize_clusters.py` |
+| `scripts/align_pcd_with_map.py` | 交互式点云-地图对齐工具 | `python scripts/align_pcd_with_map.py` |
+| `scripts/calibrate_bev_coords.py` | BEV 地图坐标系交互式标定 | `python scripts/calibrate_bev_coords.py` |
+| `scripts/check_points.py` | 地图像素坐标查看小工具 | `python scripts/check_points.py` |
+| `scripts/prepare_lab_map.py` | 实验室地图裁剪与坐标系建立 | `python scripts/prepare_lab_map.py` |
+| `scripts/test_yolo_3stage.py` | YOLO 三阶段推理效果测试 | `python scripts/test_yolo_3stage.py` |
+| `scripts/validate_air_tracking_sequence.py` | 空中目标跟踪鲁棒性验证 | `python scripts/validate_air_tracking_sequence.py` |
 
 ### 标定工具（ROS 节点）
 
@@ -458,11 +458,11 @@ bash bringup.sh
 
 # 或者 launch 分步启动（按顺序）：
 ros2 launch livox_ros_driver2 rviz_HAP_launch.py         # 终端 1：雷达驱动
-ros2 launch registration registration.launch.py          # 终端 2：ICP 配准（⚠ RViz 给 2D Pose Estimate）
-ros2 launch hnurm_bringup hnurm_radar_launch.py          # 终端 3：主节点组（配准成功后再启动）
+ros2 launch hnurm_bringup hnurm_radar_launch.py          # 终端 2：主节点组（含 lidar_node）
+ros2 launch registration registration.launch.py          # 终端 3：ICP 配准（⚠ RViz 给 2D Pose Estimate）
 
 # =================== 空中方案（纯雷达）====================
 ros2 launch livox_ros_driver2 rviz_HAP_launch.py         # 终端 1：雷达驱动
-ros2 launch registration registration.launch.py          # 终端 2：ICP 配准（⚠ RViz 给 2D Pose Estimate）
-ros2 launch hnurm_bringup hnurm_air_launch.py            # 终端 3：空中方案（配准成功后再启动）
+ros2 launch hnurm_bringup hnurm_air_launch.py            # 终端 2：空中方案（含 lidar_node）
+ros2 launch registration registration.launch.py          # 终端 3：ICP 配准（⚠ RViz 给 2D Pose Estimate）
 ```

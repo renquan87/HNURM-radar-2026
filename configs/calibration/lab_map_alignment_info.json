@@ -1,0 +1,103 @@
+{
+  "description": "实验室地图标定对齐信息",
+  "transform_matrix": [
+    [
+      0.9039906717466134,
+      0.012941690431869742,
+      101.26823136523436
+    ],
+    [
+      -0.02563568664063863,
+      0.8786784763834078,
+      262.89227289927095
+    ]
+  ],
+  "calib_points": [
+    {
+      "old_pixel": [
+        949.0,
+        994.0
+      ],
+      "world_coord": [
+        9.73,
+        3.89
+      ],
+      "canvas_pixel": [
+        973,
+        1111
+      ]
+    },
+    {
+      "old_pixel": [
+        1071.0,
+        903.0
+      ],
+      "world_coord": [
+        10.8,
+        4.7
+      ],
+      "canvas_pixel": [
+        1080,
+        1030
+      ]
+    },
+    {
+      "old_pixel": [
+        1173.0,
+        641.0
+      ],
+      "world_coord": [
+        11.7,
+        7.04
+      ],
+      "canvas_pixel": [
+        1170,
+        796
+      ]
+    },
+    {
+      "old_pixel": [
+        2298.0,
+        98.0
+      ],
+      "world_coord": [
+        21.8,
+        12.1
+      ],
+      "canvas_pixel": [
+        2180,
+        290
+      ]
+    },
+    {
+      "old_pixel": [
+        875.0,
+        1386.0
+      ],
+      "world_coord": [
+        9.07,
+        0.238
+      ],
+      "canvas_pixel": [
+        907,
+        1476
+      ]
+    },
+    {
+      "old_pixel": [
+        2417.0,
+        987.0
+      ],
+      "world_coord": [
+        22.9,
+        3.95
+      ],
+      "canvas_pixel": [
+        2290,
+        1105
+      ]
+    }
+  ],
+  "output_map": "/data/projects/radar/hnurm_radar/map/lab_map_28x15.png",
+  "created_time": "2026-03-17 01:19:57"
+}

@@ -171,13 +171,24 @@ class EKFNode(Node):
                 if not self.debug_coordinate_publish:
                     continue            # 赛场模式: 丢弃
                 robot_id = 106          # 调试模式: 映射为蓝方空中标准 ID
+            # camera_scheme NULL 机器人: 9000+ ID → 调试模式下映射到对应颜色的哨兵 slot
+            elif 9000 <= robot_id < 10000:
+                if not self.debug_coordinate_publish:
+                    continue            # 赛场模式: 丢弃
+                # 根据 label 判断颜色, 映射到对应哨兵 ID (7/107) 以便经过 EKF 滤波
+                if location.label == 'Blue':
+                    robot_id = 107
+                elif location.label == 'Red':
+                    robot_id = 7
+                else:
+                    continue
             # 跳过 ID 不在映射表中的机器人
             if robot_id not in self.transform_to_th:
                 continue
             x = location.x
             y = location.y
             time = self.get_current_time_ms()
-            if self.eneny_color == "NULL":
+            if self.eneny_color == "NULL" and location.label != 'NULL':
                 self.eneny_color = location.label
             self.locations_queue[1][self.transform_to_th[robot_id] - 1].x = x
             self.locations_queue[1][self.transform_to_th[robot_id] - 1].y = y
@@ -197,7 +208,7 @@ class EKFNode(Node):
         ## 保存历史位置（每帧更新，用于下一帧速度/加速度计算） 等测试完成之后再考虑优化
         for i in range(len(self.locations_queue[0])):
             # if self.locations_queue[1][i].time > 0:
-            if self.locations_queue[1][i].time == 0:
+            if self.locations_queue[1][i].time > 0:
                 self.locations_queue[0][i].time = self.locations_queue[1][i].time
                 self.locations_queue[0][i].x = self.locations_queue[1][i].x
                 self.locations_queue[0][i].y = self.locations_queue[1][i].y
@@ -220,15 +231,12 @@ class EKFNode(Node):
                 continue
             if self.eneny_color == 'Blue':
                 location.id = th_to_id_blue.get(i, i + 101)
+                location.label = 'Blue'
             elif self.eneny_color == 'Red':
                 location.id = th_to_id_red.get(i, i + 1)
+                location.label = 'Red'
             else:
                 continue
-            # 空中机器人 (id=6 或 106) 用 "Air" 标签区分
-            if location.id in (6, 106):
-                location.label = self.eneny_color
-            else:
-                location.label = self.eneny_color
             location.x = float(estimated_locations[i][0])
             location.y = float(estimated_locations[i][2])
             location.z = float(self.locations_queue[1][i].z)

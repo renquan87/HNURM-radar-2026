@@ -1,0 +1,20 @@
+[
+    {
+        "name": "示例点A",
+        "world_xy": [2.0, 3.0],
+        "world_z": 0.0,
+        "description": "实验室某墙角（用卷尺从PCD原点量得）"
+    },
+    {
+        "name": "示例点B",
+        "world_xy": [5.5, 7.2],
+        "world_z": 0.0,
+        "description": "中间柱子底部"
+    },
+    {
+        "name": "示例点C",
+        "world_xy": [8.0, 4.0],
+        "world_z": 0.0,
+        "description": "远端墙角"
+    }
+]
