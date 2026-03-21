@@ -79,6 +79,8 @@ class CameraDetector(Node):
 
         self.my_color = self.main_cfg['global']['my_color']
         self.is_debug = self.main_cfg['global']['is_debug']
+        self.debug_coordinate_publish = self.main_cfg['global'].get(
+            'debug_coordinate_publish', False)
         self.bridge = CvBridge()
 
         # ---------- 初始化 CarList ----------
@@ -743,17 +745,22 @@ class CameraDetector(Node):
                         # if label == "NULL":
                         #     continue
                         
-                        # 过滤己方车辆
+                        # 过滤己方车辆（debug 模式下保留己方，用于小地图展示）
                         car_id = self.carList.get_car_id(label) if label != "NULL" else -1
                         # 测试模式：允许 NULL 标签通过，使用 track_id 作为临时 ID
                         if car_id == -1 and label == "NULL":
                             car_id = 9000 + track_id  # 使用 9000+ 作为 NULL 机器人的临时 ID
                         elif car_id == -1:
                             continue
+                        is_friendly = False
                         if self.my_color == "Red" and car_id < 100 and car_id != 7:
-                            continue
+                            if not self.debug_coordinate_publish:
+                                continue
+                            is_friendly = True
                         if self.my_color == "Blue" and car_id > 100 and car_id != 107:
-                            continue
+                            if not self.debug_coordinate_publish:
+                                continue
+                            is_friendly = True
 
                         # 将推理分辨率坐标还原到原始分辨率
                         orig_xyxy = [
@@ -802,8 +809,8 @@ class CameraDetector(Node):
                                     (disp_x, disp_y),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
 
-                        # 组装 CarList 结果（NULL 机器人跳过 CarList 更新）
-                        if label != "NULL":
+                        # 组装 CarList 结果（己方和 NULL 机器人跳过 CarList 更新）
+                        if label != "NULL" and not is_friendly:
                             orig_xywh = [
                                 float(xywh_box[0] * ORIG_W / INFER_W),
                                 float(xywh_box[1] * ORIG_H / INFER_H),
@@ -821,8 +828,10 @@ class CameraDetector(Node):
                         loc.y = float(field_y)
                         loc.z = 0.0
                         loc.id = car_id
-                        color = "Red" if car_id < 100 else "Blue"
-                        loc.label = color
+                        if is_friendly:
+                            loc.label = "Friendly"
+                        else:
+                            loc.label = "Red" if car_id < 100 else "Blue"
                         allLocation.locs.append(loc)
 
                 # 更新 CarList
@@ -872,15 +881,24 @@ class CameraDetector(Node):
             disp_x = x
             disp_y = y
 
-            # 机器人颜色只决定绘制颜色
-            if loc.label == 'Red':
-                color = (0, 0, 255)
+            # 机器人颜色决定绘制颜色：己方绿色，红方敌人红色，蓝方敌人蓝色
+            if loc.label == 'Friendly':
+                color = (0, 255, 0)    # 绿色 = 己方
+            elif loc.label == 'Red':
+                color = (0, 0, 255)    # 红色
             else:
-                color = (255, 0, 0)
+                color = (255, 0, 0)    # 蓝色
 
-            # 绘制圆圈和编号
-            cv2.circle(show_map, (map_xx, map_yy), 60, color, 4)
-            cv2.putText(show_map, str(loc.id), (map_xx - 15, map_yy + 10),
+            # 绘制圆圈和编号（己方用虚线风格区分）
+            if loc.label == 'Friendly':
+                # 己方：绿色圆圈 + 标签前缀 ★
+                cv2.circle(show_map, (map_xx, map_yy), 60, color, 2)
+                cv2.circle(show_map, (map_xx, map_yy), 50, color, 2)
+                id_text = f"*{loc.id}"
+            else:
+                cv2.circle(show_map, (map_xx, map_yy), 60, color, 4)
+                id_text = str(loc.id)
+            cv2.putText(show_map, id_text, (map_xx - 15, map_yy + 10),
                         cv2.FONT_HERSHEY_SIMPLEX, 2, color, 4)
             cv2.putText(show_map,
                         f"{disp_x},{disp_y}",

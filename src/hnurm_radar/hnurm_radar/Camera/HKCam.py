@@ -36,9 +36,31 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "./MvImport"))
 from MvCameraControl_class import *
 
 
+def _load_camera_config():
+    """从 main_config.yaml 读取相机曝光/增益参数"""
+    try:
+        from ruamel.yaml import YAML
+        config_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'configs'))
+        config_path = os.path.join(config_dir, 'main_config.yaml')
+        with open(config_path, encoding='utf-8') as f:
+            cfg = YAML().load(f)
+        cam_cfg = cfg.get('camera', {})
+        return {
+            'exposure_time': float(cam_cfg.get('exposure_time', 8000.0)),
+            'gain': float(cam_cfg.get('gain', 20.0)),
+        }
+    except Exception as e:
+        print(f"[HKCam] 读取 main_config.yaml 失败，使用默认参数: {e}")
+        return {'exposure_time': 8000.0, 'gain': 20.0}
+
+
 # 适用CS060, 修改像素格式以适配其他型号
 class HKCam:
-    def __init__(self, cameraId) -> None:
+    def __init__(self, cameraId, exposure_time=None, gain=None) -> None:
+        # 从配置文件加载默认值，构造参数可覆盖
+        cam_config = _load_camera_config()
+        self._exposure_time = exposure_time if exposure_time is not None else cam_config['exposure_time']
+        self._gain = gain if gain is not None else cam_config['gain']
         deviceList = MV_CC_DEVICE_INFO_LIST()
         tlayerType = MV_GIGE_DEVICE | MV_USB_DEVICE
         # ch:枚举设备 | en:Enum device
@@ -91,17 +113,19 @@ class HKCam:
             print("set pixel format fail! ret[0x%x]" % ret)
             sys.exit()
 
-        # 设置曝光时间
-        ret = self.cam.MV_CC_SetFloatValue("ExposureTime", 8000)
+        # 设置曝光时间（从 main_config.yaml 读取，可通过构造参数覆盖）
+        ret = self.cam.MV_CC_SetFloatValue("ExposureTime", self._exposure_time)
         if ret != 0:
             print("set exposure time fail! ret[0x%x]" % ret)
             sys.exit()
+        print(f"[HKCam] ExposureTime = {self._exposure_time}")
 
-        # 设置增益
-        ret = self.cam.MV_CC_SetFloatValue("Gain", 20)
+        # 设置增益（从 main_config.yaml 读取，可通过构造参数覆盖）
+        ret = self.cam.MV_CC_SetFloatValue("Gain", self._gain)
         if ret != 0:
             print("set gain fail! ret[0x%x]" % ret)
             sys.exit()
+        print(f"[HKCam] Gain = {self._gain}")
 
         # ch:获取数据包大小 | en:Get payload size
         stParam = MVCC_INTVALUE()
