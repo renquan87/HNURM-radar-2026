@@ -116,25 +116,26 @@
 
 路径：`hnurm_radar/lidar_scheme/lidar_node.py`
 
-激光雷达数据接收与预处理节点。
+激光雷达数据接收、累积与背景减除节点。
 
 **功能**：
 - 订阅 `/livox/lidar` 话题接收 Livox 点云数据
-- 对点云进行体素降采样和离群点滤波
-- 将处理后的点云通过 TF 变换到相机坐标系
-- 提供点云数据供 `detector_node` 查询
+- 进行近距离/远距离滤波，并将原始点云累积到 `PcdQueue(max_size=10)`
+- 发布原始累积点云到 `/lidar_pcds`，供 `registration` 节点执行点云配准
+- 加载 `configs/main_config.yaml` 中配置的背景地图（默认 `data/background.pcd`）
+- 基于 `cKDTree` 执行背景减除，并发布前景点云到 `/target_pointcloud`
 
 #### radar.py — RadarNode（ROS2 节点）
 
 路径：`hnurm_radar/lidar_scheme/radar.py`
 
-相机+雷达联合定位的主节点（备用方案），整合了相机检测和雷达数据处理的完整流程。
+相机+雷达联合定位的主节点，整合相机检测、背景减除后点云匹配和坐标变换流程。
 
 **功能**：
-- 初始化相机和 Converter
-- 通过 GUI 进行相机-赛场坐标系标定
-- 执行 YOLO 检测 + 点云匹配
-- 管理 CarList 并发布位置信息
+- 订阅 `detect_result` 与 `/target_pointcloud`
+- 使用 `Converter` 将点云投影到图像平面，并在检测框内提取候选点云
+- 结合 `registration` 提供的 TF，将目标坐标从 `livox` 坐标系转换到赛场坐标系
+- 管理 `CarList` 并发布 `location`
 
 ---
 

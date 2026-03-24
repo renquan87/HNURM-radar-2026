@@ -2,7 +2,7 @@
 global:
   my_color: "Red" # "Blue"
   is_debug: True # False
-  scene: "competition"  # "competition" = 赛场（28x15m）| "lab" = 实验室测试
+  scene: "lab"  # "competition" = 赛场（28x15m）| "lab" = 实验室测试
   # 调试坐标发布开关
   # true  = 调试模式: 地面方案二和空中检测的所有坐标都经 location→EKF 发布（含非标准ID映射）
   # false = 赛场模式: 仅标准 ID (1-7/101-107) 经 EKF 发布, 其余全部丢弃, 杜绝干扰项
@@ -47,6 +47,10 @@ lidar:
   min_distance: 1 # 去除距离在这个范围以内的接收点云
   max_distance: 40 # 去除距离在这个范围以外的接收点云
   lidar_topic_name: "/livox/lidar" # 点云发布话题名字
+  background_map_path: "data/background.pcd" # 背景点云地图路径（相对项目根目录）
+  background_threshold: 0.2 # 背景减除阈值（米）
+  voxel_size: 0.1 # 背景地图降采样体素大小（米）
+  publish_projected: true # 是否发布背景减除后的点云到 target_pointcloud
 
 communication:
   port: '/dev/ttyUSB0' # 串口

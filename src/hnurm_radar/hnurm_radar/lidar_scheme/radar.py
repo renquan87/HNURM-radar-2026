@@ -3,14 +3,14 @@ radar.py — 激光雷达方案的融合定位节点（方案二）
 
 功能：
   订阅 detector_node 发布的 2D 检测结果（detect_result）和 lidar_node 发布的
-  累积点云（lidar_pcds），将 2D 检测框投影到 3D 点云中获取目标的三维位置，
+  背景减除点云（target_pointcloud），将 2D 检测框投影到 3D 点云中获取目标的三维位置，
   再通过 TF 变换（来自 registration 节点的 ICP 配准结果）将坐标从激光雷达
   坐标系转换到赛场坐标系，最终发布到 /location 话题。
 
 数据流：
   detect_result (Robots)  ──┐
                             ├→ radar_callback() → 点云投影 → 聚类 → 坐标变换 → /location (Locations)
-  lidar_pcds (PointCloud2) ─┘
+  target_pointcloud (PointCloud2) ─┘
   TF (livox → map)        ──→ on_timer() 定时查询
 
 核心流程（radar_callback）：
@@ -23,7 +23,7 @@ radar.py — 激光雷达方案的融合定位节点（方案二）
 
 订阅话题：
   - detect_result (Robots)      — 来自 detector_node 的检测框
-  - lidar_pcds   (PointCloud2)  — 来自 lidar_node 的累积点云
+  - target_pointcloud (PointCloud2)  — 来自 lidar_node 的背景减除点云
   - TF (livox → map)            — 来自 registration 节点的配准变换
 
 发布话题：
@@ -129,8 +129,8 @@ class Radar(Node):
         # 订阅Robots话题
         self.sub_detect = self.create_subscription(Robots, "detect_result", self.radar_callback, qos_profile)
         self.get_logger().info('Radar subscriber has been started at {}.'.format(today))
-        # 订阅点云话题 detect_pcds
-        self.sub_pcds = self.create_subscription(PointCloud2, "lidar_pcds", self.pcd_callback, qos__lidar_profile)
+        # 订阅背景减除后的点云话题
+        self.sub_pcds = self.create_subscription(PointCloud2, "target_pointcloud", self.pcd_callback, qos__lidar_profile)
         # 发布车辆位置信息
         self.pub_location = self.create_publisher(Locations, "location", qos_profile)
         self.last_frameid = -1
@@ -195,15 +195,16 @@ class Radar(Node):
         '''
         子线程函数，对于/livox/lidar topic数据的处理 , data是传入的
         '''
-        points = pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)
         points = np.array(
-                list(points),
+                list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)),
                 dtype=[("x", np.float32), ("y", np.float32), ("z", np.float32)],
         )
-        points = np.stack([points["x"], points["y"], points["z"]], axis=-1).astype(np.float32)
-        
-        points = np.array(list(points))
-        self.lidar_points = points.copy()
+        if points.size == 0:
+            self.lidar_points = None
+            return
+
+        points = np.stack([points["x"], points["y"], points["z"]], axis=-1).astype(np.float64)
+        self.lidar_points = np.ascontiguousarray(points)
         # self.converter.lidar_to_field(points)
 
     # 去除地面点云，将点云转换到赛场坐标系，过滤 Z 值，发布去除地面后的点云

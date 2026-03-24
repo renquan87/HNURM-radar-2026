@@ -162,7 +162,7 @@ bash bringup.sh
 # === 终端 1：激光雷达驱动（必须最先启动，提供原始点云 /livox/lidar）===
 ros2 launch livox_ros_driver2 rviz_HAP_launch.py
 
-# === 终端 2：主节点组（一次性启动 6 个节点，其中 lidar_node 会发布 /lidar_pcds）===
+# === 终端 2：主节点组（一次性启动 6 个节点，其中 lidar_node 会同时发布 /lidar_pcds 和 /target_pointcloud）===
 ros2 launch hnurm_bringup hnurm_radar_launch.py
 
 # === 终端 3：ICP 点云配准（必须在终端 2 之后，因为它订阅 /lidar_pcds）===
@@ -171,7 +171,7 @@ ros2 launch registration registration.launch.py
 # 等待 registration 配准成功（error 值明显下降），此后 radar_node 即可获取 TF
 ```
 
-> ⚠ **启动顺序很重要**：雷达驱动 → 主节点组（含 `lidar_node`，发布 `/lidar_pcds`）→ registration（+ 手动给 2D Pose Estimate）。`registration` 订阅的是 `/lidar_pcds` 而非 `/livox/lidar`，如果在 `lidar_node` 之前启动，会因无数据卡在 `waiting for quatro++ calculation`。
+> ⚠ **启动顺序很重要**：雷达驱动 → 主节点组（含 `lidar_node`，发布原始累积点云 `/lidar_pcds` 供 `registration` 使用，并发布背景减除后的 `/target_pointcloud` 供 `radar_node` 使用）→ registration（+ 手动给 2D Pose Estimate）。`registration` 订阅的是 `/lidar_pcds` 而非 `/livox/lidar`，`radar_node` 订阅的是 `/target_pointcloud`，如果在 `lidar_node` 之前启动，会因无数据导致配准和融合链路都无法正常工作。
 
 `hnurm_radar_launch.py` 一次启动的 6 个节点：
 
@@ -192,7 +192,7 @@ ros2 launch registration registration.launch.py
 # === 终端 1：激光雷达驱动（最先启动，发布 /livox/lidar）===
 ros2 launch livox_ros_driver2 rviz_HAP_launch.py
 
-# === 终端 2：激光雷达数据接收（订阅 /livox/lidar，发布 /lidar_pcds）===
+# === 终端 2：激光雷达数据接收（订阅 /livox/lidar，发布 /lidar_pcds 和 /target_pointcloud）===
 ros2 run hnurm_radar lidar_node
 
 # === 终端 3：ICP 点云配准（订阅 /lidar_pcds，必须在 lidar_node 之后启动）===
@@ -202,7 +202,7 @@ ros2 launch registration registration.launch.py
 # === 终端 4：YOLO 目标检测 ===
 ros2 run hnurm_radar detector_node
 
-# === 终端 5：点云-图像融合定位 ===
+# === 终端 5：点云-图像融合定位（订阅 /target_pointcloud）===
 ros2 run hnurm_radar radar_node
 
 # === 终端 6：EKF 滤波 ===
@@ -214,6 +214,20 @@ ros2 run hnurm_radar judge_messager
 # === 终端 8（可选）：小地图可视化 ===
 ros2 run hnurm_radar display_panel
 ```
+
+### 背景地图采集（地面方案二）
+
+地面方案二现在默认启用背景减除。首次部署到新场地、雷达安装位置变化、或背景环境明显变化后，建议先采集一份背景点云：
+
+```bash
+python3 scripts/lidar_collect_background.py \
+  --topic /livox/lidar \
+  --output data/background.pcd \
+  --max-frames 120 \
+  --voxel-size 0.1
+```
+
+采集完成后，[`configs/main_config.yaml`](configs/main_config.yaml) 的 `lidar.background_map_path` 默认就是 `data/background.pcd`，[`src/hnurm_radar/hnurm_radar/lidar_scheme/lidar_node.py`](src/hnurm_radar/hnurm_radar/lidar_scheme/lidar_node.py) 会在启动时自动加载，并将前景点云发布到 `/target_pointcloud`。
 
 ### 启动方式 D：离线视频调试
 
