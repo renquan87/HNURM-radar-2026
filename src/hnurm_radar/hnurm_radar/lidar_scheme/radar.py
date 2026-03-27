@@ -161,7 +161,7 @@ class Radar(Node):
             self.radar_to_field_inv = np.linalg.inv(self.radar_to_field)
             # self.get_logger().info(f"获取 TF 成功: {transform}")
         except TransformException as ex:
-            self.radar_to_field = np.ones((4, 4))
+            self.radar_to_field = np.ones((4, 4)) # 之后改为 np.eye(4)（单位阵），或者更优雅的做法：在全局保留上一次成功的矩阵 last_valid_tf
             self.get_logger().error(f"获取 TF 失败: {ex}")    
     
     # 将 TF 转换为 4x4 齐次变换矩阵
@@ -226,7 +226,7 @@ class Radar(Node):
         field_pts = field_pts[:, :3]  # 去掉齐次坐标的最后一列
 
         # 筛选 z 值不在范围内的点
-        mask = ((field_pts[:, 2] > -11111))
+        mask = ((field_pts[:, 2] > -11111)) # 之后需要修改为实际地面范围？
         filtered_points = field_pts[mask]
 
         # 检查过滤后的点云
@@ -357,7 +357,7 @@ class Radar(Node):
                 # NULL 标签机器人不写入 CarList，单独收集用于 display_panel 显示
                 null_robot_locations.append(field_xyz)
             else:
-                self.carList_results.append([track_id , self.carList.get_car_id(label) , xywh_box , 1 , center , field_xyz])
+                self.carList_results.append([track_id , self.carList.get_car_id(label) , xywh_box , 1 , center , field_xyz]) # no clear ?
         self.carList.update_car_info(self.carList_results)
         all_infos = self.carList.get_all_info() # 此步不做trust的筛选，留给messager做
         my_car_infos = []

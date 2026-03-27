@@ -1,8 +1,8 @@
 # 路径使用相对于项目根目录的相对路径，代码会自动解析为绝对路径
 path:
-  stage_one_path:  "weights/stage_one.pt"
-  stage_two_path: "weights/stage_two.pt"
-  stage_three_path: "weights/stage_three.pt"
+  stage_one_path:  "weights/stage_one.engine"
+  stage_two_path: "weights/stage_two.engine"
+  stage_three_path: "weights/stage_three.engine"
   tracker_path: "configs/bytetrack.yaml"
 
 params:
