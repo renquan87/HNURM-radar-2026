@@ -52,7 +52,7 @@ from ruamel.yaml import YAML
 import numpy as np
 import open3d as o3d
 
-from ..shared.paths import MAIN_CONFIG_PATH, FIELD_WIDTH, FIELD_HEIGHT
+from ..shared.paths import MAIN_CONFIG_PATH, FIELD_WIDTH, FIELD_HEIGHT, PCD_FILE_PATH
 from .air_config import load_air_target_config
 from .point_cloud_processor import AirPointCloudProcessor
 from .cluster_detector import AirClusterDetector
@@ -142,36 +142,56 @@ class AirTargetNode(Node):
             )
 
         # ---- 背景减除 ----
-        # 在线学习时跳过飞行区域 [z_min, z_max]，避免将悬停无人机学入背景
-        # Z 轴方向：更负 = 更接近地面，更接近0 = 更高（更接近 LiDAR）
-        # 例：地面 z≈-1.05，无人机 z∈[-0.97,-0.5]，LiDAR z=0
+        # 新方案：使用点云地图（map 坐标系）做 KDTree 背景减除
+        # 旧方案：在线学习 / 预录 PCD（livox 帧体素方案）
         self.bg_subtractor: Optional[AirBackgroundSubtractor] = None
+        self._bg_source = self.air_cfg.background.source  # "map" | "pcd" | "online"
+        self._bg_loaded = False
+
         if self.air_cfg.background.enabled:
-            flight_z_min = self.air_cfg.preprocessing.height_filter.z_min  # e.g., -1.5
-            flight_z_max = self.air_cfg.preprocessing.height_filter.z_max  # e.g., -0.5
+            flight_z_min = self.air_cfg.preprocessing.height_filter.z_min
+            flight_z_max = self.air_cfg.preprocessing.height_filter.z_max
             self.bg_subtractor = AirBackgroundSubtractor(
+                bg_threshold=self.air_cfg.background.bg_threshold,
                 voxel_size=self.air_cfg.background.voxel_size,
-                occupy_threshold=self.air_cfg.background.occupy_threshold,
-                learning_frames=self.air_cfg.background.learning_frames,
                 flight_z_min=flight_z_min,
                 flight_z_max=flight_z_max,
             )
+            # 旧模式兼容参数
+            self.bg_subtractor.occupy_threshold = self.air_cfg.background.occupy_threshold
+            self.bg_subtractor.learning_frames = self.air_cfg.background.learning_frames
+            if self._bg_source == "online":
+                self.bg_subtractor.is_ready = (self.air_cfg.background.learning_frames == 0)
 
-        # ---- 背景预加载（从预建 PCD 地图加载，可跳过在线学习） ----
-        self._bg_pcd_path = ""
-        self._bg_preloaded = False
-        self._bg_preload_tf: Optional[np.ndarray] = None  # BG 预加载时使用的 TF
-        self._bg_drift_threshold = 0.10  # TF 漂移超过此值(m)时自动重载 BG
-        if self.bg_subtractor is not None and self.air_cfg.background.bg_pcd_file:
-            from ..shared.paths import PROJECT_ROOT
-            pcd_path = self.air_cfg.background.bg_pcd_file
-            if not os.path.isabs(pcd_path):
-                pcd_path = os.path.join(PROJECT_ROOT, pcd_path)
-            if os.path.isfile(pcd_path):
-                self._bg_pcd_path = pcd_path
-                self.get_logger().info(f'背景预加载已配置: {pcd_path}，等待 TF 就绪后加载')
-            else:
-                self.get_logger().warn(f'bg_pcd_file 不存在: {pcd_path}，回退到在线学习')
+        # ---- 背景地图路径解析 ----
+        self._bg_map_path = ""
+        if self.bg_subtractor is not None:
+            if self._bg_source == "map":
+                # 新方案：使用场景配置中的点云地图（不需要赛前录制）
+                if os.path.isfile(PCD_FILE_PATH):
+                    self._bg_map_path = PCD_FILE_PATH
+                    self.get_logger().info(
+                        f'🗺️ 点云地图背景已配置: {PCD_FILE_PATH}，等待初始化时加载'
+                    )
+                else:
+                    self.get_logger().warn(
+                        f'点云地图不存在: {PCD_FILE_PATH}，回退到在线学习'
+                    )
+                    self._bg_source = "online"
+                    self.bg_subtractor.is_ready = (self.air_cfg.background.learning_frames == 0)
+            elif self._bg_source == "pcd":
+                # 旧方案：使用预录背景 PCD
+                from ..shared.paths import PROJECT_ROOT
+                pcd_path = self.air_cfg.background.bg_pcd_file
+                if not os.path.isabs(pcd_path):
+                    pcd_path = os.path.join(PROJECT_ROOT, pcd_path)
+                if pcd_path and os.path.isfile(pcd_path):
+                    self._bg_map_path = pcd_path
+                    self.get_logger().info(f'背景PCD预加载已配置: {pcd_path}，等待 TF 就绪后加载')
+                else:
+                    self.get_logger().warn(f'bg_pcd_file 不存在: {pcd_path}，回退到在线学习')
+                    self._bg_source = "online"
+                    self.bg_subtractor.is_ready = (self.air_cfg.background.learning_frames == 0)
 
         # ---- 松弛查询参数（传入 tracker.update） ----
         self._lq_params = None
@@ -237,10 +257,12 @@ class AirTargetNode(Node):
         self.frame_id = 0
         bg_info = 'OFF'
         if self.bg_subtractor:
-            if self._bg_pcd_path:
-                bg_info = f'PRELOAD ({os.path.basename(self._bg_pcd_path)})'
+            if self._bg_source == "map":
+                bg_info = f'MAP_KDTREE ({os.path.basename(self._bg_map_path)}, thresh={self.air_cfg.background.bg_threshold}m)'
+            elif self._bg_source == "pcd" and self._bg_map_path:
+                bg_info = f'PCD_PRELOAD ({os.path.basename(self._bg_map_path)})'
             else:
-                bg_info = (f'ON (flight_zone=[{flight_z_min}, {flight_z_max}], '
+                bg_info = (f'ONLINE (flight_zone=[{flight_z_min}, {flight_z_max}], '
                            f'frames={self.air_cfg.background.learning_frames})')
         self.get_logger().info(
             f'Air Target Node 初始化完成: '
@@ -271,7 +293,11 @@ class AirTargetNode(Node):
     # TF 变换
     # ------------------------------------------------------------------ #
     def _tf_timer_callback(self):
-        """定时查询 livox → map 的 TF 变换，并检测 TF 漂移触发 BG 重载"""
+        """定时查询 livox → map 的 TF 变换
+
+        新方案中 TF 仅用于实时点云 → map 帧变换，
+        背景模型本身在 map 帧下不受 TF 漂移影响。
+        """
         try:
             transform = self.tf_buffer.lookup_transform(
                 target_frame='map',
@@ -281,21 +307,6 @@ class AirTargetNode(Node):
             t = transform.transform.translation
             r = transform.transform.rotation
             self.radar_to_field = self._tf_to_matrix(t, r)
-
-            # TF 漂移检测：如果当前 TF 与 BG 预加载时的 TF 平移差 > 阈值，
-            # 自动触发 BG 重新预加载（使用最新 TF 重新对齐 PCD 到 livox 帧）
-            if (self._bg_preload_tf is not None
-                    and self._bg_preloaded
-                    and self._bg_pcd_path):
-                old_t = self._bg_preload_tf[:3, 3]
-                new_t = self.radar_to_field[:3, 3]
-                drift = float(np.linalg.norm(new_t - old_t))
-                if drift > self._bg_drift_threshold:
-                    self.get_logger().warn(
-                        f'⚠ TF 漂移 {drift:.3f}m（阈值{self._bg_drift_threshold}m），'
-                        f'触发 BG 重新预加载'
-                    )
-                    self._bg_preloaded = False  # 下次 _process_callback 时重载
         except TransformException as ex:
             if self.radar_to_field is None:
                 self.get_logger().warn(f'等待 TF (livox→map): {ex}')
@@ -392,10 +403,12 @@ class AirTargetNode(Node):
         pcd_down = self.processor.downsample(pcd_roi)
         n_down = len(pcd_down.points)
 
-        # 2) 背景减除（对所有点做背景检查，含 PCD 预建背景）
+        # 2) 背景减除（map 坐标系 KDTree 方案 / 旧版体素方案）
         if self.bg_subtractor is not None:
+            # 在线学习模式下继续学习（map 模式下 learn() 为空操作）
             self.bg_subtractor.learn(pcd_down)
-            pcd_fg = self.bg_subtractor.filter(pcd_down)
+            # 传入 TF 矩阵，filter() 内部将点云变换到 map 帧做背景匹配
+            pcd_fg = self.bg_subtractor.filter(pcd_down, radar_to_field=self.radar_to_field)
         else:
             pcd_fg = pcd_down
         n_fg = len(pcd_fg.points)
@@ -681,52 +694,59 @@ class AirTargetNode(Node):
             self.pub_debug_markers.publish(ma)
 
     # ------------------------------------------------------------------ #
-    # 背景预加载（从预建 PCD 地图加载，跳过在线学习）
+    # 背景加载（从点云地图 / 预建 PCD 加载）
     # ------------------------------------------------------------------ #
-    def _preload_background(self):
-        """从预建 PCD 加载背景模型（TF 就绪后调用，TF 漂移时自动重载）。
+    def _load_background(self):
+        """加载背景模型。
 
-        PCD 文件通常在世界坐标系（map 帧）中，而实时点云处理
-        在 livox 帧中进行，因此需要将 PCD 逆变换到 livox 帧。
+        新方案 (source="map")：
+          点云地图已在 map 坐标系下，直接构建 KDTree，无需 TF 变换。
+          背景模型一次性加载后不受 TF 漂移影响。
 
-        当 registration_node 的 TF 发生显著漂移时（平移 > _bg_drift_threshold），
-        _tf_timer_callback 会重置 _bg_preloaded 标志，触发此方法重新执行，
-        使用最新 TF 重新对齐 BG 到当前 livox 帧。
+        旧方案 (source="pcd")：
+          PCD 在 map 帧，需要逆变换到 livox 帧，构建体素模型。
+          TF 漂移时需要重载（但这里不再自动重载，推荐用 map 模式）。
         """
         try:
-            pcd = o3d.io.read_point_cloud(self._bg_pcd_path)
+            pcd = o3d.io.read_point_cloud(self._bg_map_path)
             n_total = len(pcd.points)
             if n_total == 0:
-                self.get_logger().warn(f'背景PCD为空: {self._bg_pcd_path}')
+                self.get_logger().warn(f'背景点云为空: {self._bg_map_path}')
                 return
 
-            # 重载时先清空旧模型（避免新旧 BG 体素混合）
-            self.bg_subtractor.reset()
-            # 重置后恢复 is_ready（reset 会将其改为 learning_frames==0 时的默认值）
-            self.bg_subtractor.is_ready = True
+            if self._bg_source == "map":
+                # ---- 新方案：map 帧 KDTree ----
+                # 点云地图已在 map 坐标系，直接加载
+                n_loaded = self.bg_subtractor.load_from_map(pcd)
+                self.get_logger().info(
+                    f'✅ 点云地图背景加载完成: {os.path.basename(self._bg_map_path)} '
+                    f'({n_total} 原始点 → {n_loaded} 点 KDTree, '
+                    f'voxel={self.air_cfg.background.voxel_size}m, '
+                    f'threshold={self.air_cfg.background.bg_threshold}m, '
+                    f'mode={self.bg_subtractor.mode})'
+                )
+            elif self._bg_source == "pcd":
+                # ---- 旧方案：livox 帧体素 ----
+                self.bg_subtractor.reset()
+                self.bg_subtractor.is_ready = True
 
-            # PCD 在 map（世界）坐标系，需要逆变换到 livox 帧
-            inv_tf = np.linalg.inv(self.radar_to_field)
-            pcd.transform(inv_tf)
+                # PCD 在 map 坐标系，逆变换到 livox 帧
+                inv_tf = np.linalg.inv(self.radar_to_field)
+                pcd.transform(inv_tf)
 
-            # ROI 裁剪 + 体素降采样（与实时处理流水线一致）
-            pcd = self.processor.crop_roi(pcd)
-            pcd = self.processor.downsample(pcd)
+                pcd = self.processor.crop_roi(pcd)
+                pcd = self.processor.downsample(pcd)
 
-            # 加载为背景模型
-            added = self.bg_subtractor.load_from_pcd(pcd)
+                added = self.bg_subtractor.load_from_pcd(pcd)
+                self.get_logger().info(
+                    f'✅ 背景PCD预加载完成: {os.path.basename(self._bg_map_path)} '
+                    f'({n_total} 点 → {len(pcd.points)} 点 ROI内, '
+                    f'{added} 个新背景体素, '
+                    f'总背景={self.bg_subtractor.background_voxel_count})'
+                )
 
-            # 记录本次预加载使用的 TF（用于后续漂移检测）
-            self._bg_preload_tf = self.radar_to_field.copy()
-
-            self.get_logger().info(
-                f'✅ 背景预加载完成: {os.path.basename(self._bg_pcd_path)} '
-                f'({n_total} 点 → {len(pcd.points)} 点 ROI内, '
-                f'{added} 个新背景体素, '
-                f'总背景={self.bg_subtractor.background_voxel_count})'
-            )
         except Exception as e:
-            self.get_logger().error(f'背景预加载失败: {e}')
+            self.get_logger().error(f'背景加载失败: {e}')
 
     # ------------------------------------------------------------------ #
     # 定时处理回调
@@ -739,14 +759,20 @@ class AirTargetNode(Node):
             return
 
         if self.radar_to_field is None:
-            # TF 未就绪，但仍需推进背景学习（用下采样后的点云）
             self.frame_id += 1
             return
 
-        # 背景预加载：TF 就绪后第一时间从 PCD 加载背景模型
-        if self._bg_pcd_path and not self._bg_preloaded:
-            self._preload_background()
-            self._bg_preloaded = True
+        # 背景加载：map 模式可在初始化时直接加载（不依赖 TF），
+        # pcd 模式需要 TF 就绪后加载
+        if self._bg_map_path and not self._bg_loaded:
+            if self._bg_source == "map":
+                # map 模式：不需要 TF，直接加载
+                self._load_background()
+                self._bg_loaded = True
+            elif self._bg_source == "pcd" and self.radar_to_field is not None:
+                # pcd 模式：需要 TF 做逆变换
+                self._load_background()
+                self._bg_loaded = True
 
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(points)

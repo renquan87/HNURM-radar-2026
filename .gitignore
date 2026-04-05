@@ -60,22 +60,9 @@ record/
 # ========================
 .DS_Store
 Thumbs.db
-docs/LEARNING_ROADMAP.md
-docs/FINAL_DOCUMENT_SUGGESTIONS.md
-docs/CONFIG_AND_PATHS_GUIDE.md
-docs/HAP_config_说明.txt
-docs/LAB_TEST_PLAN.md
 
 *.mp4
 test_output/
 test_output/*.jpg
 test_output/*.png
-docs/COORDINATE_TRANSFORM_COMPARISON.md
-docs/COORDINATE_TRANSFORM_EXPLANATION.md
-docs/AIR_TARGET_INTEGRATION.md
-docs/AIR_SCHEME_GUIDE.md
-docs/ROOT_CAUSE_ANALYSIS.md
-docs/OPTIMIZATION_PLAN.md
-docs/x_axis_drift_solution.md
-docs/x_axis_drift_master_solution.md
-docs/RADAR_RULES_REFERENCE.md
+docs/

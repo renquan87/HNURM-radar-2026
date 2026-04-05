@@ -113,12 +113,29 @@ class AirLooseQueryConfig:
 
 @dataclass
 class AirBackgroundConfig:
-    """背景减除参数"""
+    """背景减除参数
+
+    新方案（map_kdtree 模式）：
+      使用场景配置中的点云地图（scenes.xxx.pcd_file）作为背景，
+      在 map 坐标系下做 KDTree 最近邻匹配。
+      不需要赛前录制背景 PCD，TF 漂移不影响背景模型。
+
+    旧方案（voxel_legacy 模式）：
+      使用 bg_pcd_file 指定的预录 PCD 或在线学习。
+      需要将 PCD 逆变换到 livox 帧，TF 漂移时需重载。
+
+    source 选项：
+      "map"    → 新方案：使用场景点云地图（推荐）
+      "pcd"    → 旧方案：使用 bg_pcd_file 指定的预录背景 PCD
+      "online" → 旧方案：纯在线学习（不推荐）
+    """
     enabled: bool = True
-    voxel_size: float = 0.15
-    occupy_threshold: int = 5
-    learning_frames: int = 10
-    bg_pcd_file: str = ""   # 预建背景PCD路径（空=在线学习, 设为场景PCD可跳过学习）
+    source: str = "map"         # 背景来源: "map" | "pcd" | "online"
+    bg_threshold: float = 0.15  # map 模式：KDTree 最近邻距离阈值 (m)
+    voxel_size: float = 0.10    # 地图降采样体素大小 (m)
+    occupy_threshold: int = 5   # 旧模式：体素占据阈值
+    learning_frames: int = 10   # 旧模式：在线学习帧数
+    bg_pcd_file: str = ""       # 旧模式：预建背景PCD路径（source="pcd" 时使用）
 
 
 @dataclass
@@ -256,7 +273,9 @@ def load_air_target_config(cfg: dict) -> AirTargetConfig:
     bg = at.get("background", {})
     result.background = AirBackgroundConfig(
         enabled=bg.get("enabled", True),
-        voxel_size=bg.get("voxel_size", 0.15),
+        source=bg.get("source", "map"),
+        bg_threshold=bg.get("bg_threshold", 0.15),
+        voxel_size=bg.get("voxel_size", 0.10),
         occupy_threshold=bg.get("occupy_threshold", 5),
         learning_frames=bg.get("learning_frames", 10),
         bg_pcd_file=bg.get("bg_pcd_file", ""),

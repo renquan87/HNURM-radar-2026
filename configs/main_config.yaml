@@ -222,19 +222,24 @@ air_target:
     min_samples_scale: 0.6         # 松弛时 min_samples 缩小倍数（降低密度要求）
 
   # ---- 背景减除 ----
-  # 体素网格方法：统计每个体素被占据的帧数，超过阈值→标记为背景→后续过滤
-  # 区分"在线学习"和"PCD预加载"两种模式（可同时启用）：
-  #   在线学习：前 learning_frames 帧跳过飞行区域 [z_min, z_max]，避免学入悬停无人机
-  #   PCD预加载：从预建地图加载全部点(含空中固定结构)作为背景，场景无动态目标
+  # 新方案（推荐）：使用场景点云地图（map 坐标系）做 KDTree 背景减除
+  #   实时点云通过 TF 变换到 map 帧 → 最近邻查询 → 距离 < 阈值即为背景
+  #   优点：不需要赛前录制背景、TF 漂移不影响背景模型、ICP 持续修正 TF
+  # 旧方案：体素网格在 livox 帧做背景减除（source="pcd" 或 "online"）
   background:
     enabled: true                  # 是否启用背景减除
-    voxel_size: 0.15               # 背景体素大小 (m)；越小背景越精细但内存占用越高
-    occupy_threshold: 5            # 占据阈值；体素被观测 ≥ 此次数 → 视为背景
-    learning_frames: 10            # 在线学习帧数（前N帧建立背景模型）；0=持续学习
-    bg_pcd_file: "data/lab_pcds.pcd"  # 预建PCD地图路径（空=""则纯在线学习）
-                                   # 比赛时改为 "data/pcds.pcd"
-                                   # PCD预加载会使用全部高度的点作为背景（因PCD是纯静态场景）
-                                   # ⚠ PCD必须在无人机起飞前采集，否则会把无人机学进背景
+    source: "map"                  # 背景来源:
+                                   #   "map"    = 使用场景点云地图（推荐，不需要赛前录制）
+                                   #   "pcd"    = 使用 bg_pcd_file 指定的预录背景 PCD（旧方案）
+                                   #   "online" = 纯在线学习（不推荐）
+    bg_threshold: 0.15             # map 模式：KDTree 最近邻距离阈值 (m)
+                                   # 实时点到地图最近点距离 < 此值 → 视为背景
+                                   # 推荐 0.10~0.20m；越小越精准但对 TF 精度要求越高
+    voxel_size: 0.10               # 地图降采样体素大小 (m)；越小地图越精细但 KDTree 越大
+                                   # 推荐 0.05~0.15m
+    occupy_threshold: 5            # 旧模式：体素占据阈值
+    learning_frames: 10            # 旧模式：在线学习帧数
+    bg_pcd_file: ""                # 旧模式：预建背景PCD路径（source="pcd" 时使用）
 
   # ---- 多帧缓冲 ----
   # 叠加最近 frame_count 帧的空中区域点云后再聚类
