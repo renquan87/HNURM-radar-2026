@@ -59,7 +59,7 @@ def load_config():
         scene = cfg.get('global', {}).get('scene', 'lab')
         scenes = cfg.get('scenes', {})
         scene_cfg = scenes.get(scene, scenes.get('lab', {}))
-        std_map_rel = scene_cfg.get('std_map', 'map/lab_map_28x15.png')
+        std_map_rel = scene_cfg.get('std_map', 'data/maps/lab/lab_map_28x15.png')
         return {
             'scene': scene,
             'std_map': os.path.join(PROJECT_ROOT, std_map_rel),
@@ -70,7 +70,7 @@ def load_config():
         print(f"[WARN] 无法加载配置: {e}")
         return {
             'scene': 'lab',
-            'std_map': os.path.join(PROJECT_ROOT, 'map', 'lab_map_28x15.png'),
+            'std_map': os.path.join(PROJECT_ROOT, 'data', 'maps', 'lab', 'lab_map_28x15.png'),
             'field_width': FIELD_W,
             'field_height': FIELD_H,
         }

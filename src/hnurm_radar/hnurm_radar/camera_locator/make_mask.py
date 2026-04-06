@@ -174,9 +174,9 @@ def main():
             # 直接运行时回退到相对路径
             base = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..'))
             if map_path is None:
-                map_path = os.path.join(base, "map", "std_map.png")
+                map_path = os.path.join(base, "data", "maps", "competition_2026", "std_map.png")
             if out_path is None:
-                out_path = os.path.join(base, "map", "map_mask.png")
+                out_path = os.path.join(base, "data", "maps", "competition_2026", "map_mask.png")
 
     maker = MaskMaker(map_path, out_path)
     maker.run()

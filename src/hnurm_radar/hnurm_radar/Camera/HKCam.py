@@ -40,9 +40,8 @@ def _load_camera_config():
     """从 main_config.yaml 读取相机曝光/增益参数"""
     try:
         from ruamel.yaml import YAML
-        config_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'configs'))
-        config_path = os.path.join(config_dir, 'main_config.yaml')
-        with open(config_path, encoding='utf-8') as f:
+        from ..shared.paths import MAIN_CONFIG_PATH
+        with open(MAIN_CONFIG_PATH, encoding='utf-8') as f:
             cfg = YAML().load(f)
         cam_cfg = cfg.get('camera', {})
         return {

@@ -30,9 +30,9 @@ PROJECT_ROOT = os.path.normpath(
 
 # ======================== 一级目录 ========================
 CONFIGS_DIR = os.path.join(PROJECT_ROOT, "configs")
-WEIGHTS_DIR = os.path.join(PROJECT_ROOT, "weights")
-MAP_DIR = os.path.join(PROJECT_ROOT, "map")
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+WEIGHTS_DIR = os.path.join(DATA_DIR, "weights")           # 从 weights/ 迁移到 data/weights/
+MAP_DIR = os.path.join(DATA_DIR, "maps")                  # 从 map/ 迁移到 data/maps/
 RECORD_DIR = os.path.join(PROJECT_ROOT, "record")
 TEST_RESOURCES_DIR = os.path.join(PROJECT_ROOT, "test_resources")
 
@@ -46,9 +46,9 @@ HAP_CONFIG_PATH = os.path.join(CONFIGS_DIR, "HAP_config.json")
 ICP_RVIZ_PATH = os.path.join(CONFIGS_DIR, "icp.rviz")
 
 # ======================== 模型权重 ========================
-STAGE_ONE_PATH = os.path.join(WEIGHTS_DIR, "stage_one.pt")
-STAGE_TWO_PATH = os.path.join(WEIGHTS_DIR, "stage_two.pt")
-STAGE_THREE_PATH = os.path.join(WEIGHTS_DIR, "stage_three.pt")
+STAGE_ONE_PATH = os.path.join(WEIGHTS_DIR, "stage_one", "stage_one.pt")
+STAGE_TWO_PATH = os.path.join(WEIGHTS_DIR, "stage_two", "stage_two.pt")
+STAGE_THREE_PATH = os.path.join(WEIGHTS_DIR, "stage_three", "stage_three.pt")
 
 # ======================== ultralytics 路径 ========================
 ULTRALYTICS_DIR = os.path.join(PROJECT_ROOT, "src", "hnurm_radar")
@@ -61,10 +61,10 @@ def _load_scene_config():
     如果读取失败（文件不存在、格式错误等），回退到赛场默认值。
     """
     defaults = {
-        "std_map": "map/std_map.png",
-        "pfa_map": "map/pfa_map_2025.jpg",
-        "pcd_file": "data/pcds.pcd",
-        "downsampled_pcd": "data/pcds_downsampled.pcd",
+        "std_map": "data/maps/competition_2026/std_map.png",
+        "pfa_map": "data/maps/competition_2026/pfa_map_2025.jpg",
+        "pcd_file": "data/pointclouds/registration/pcds.pcd",
+        "downsampled_pcd": "data/pointclouds/registration/pcds_downsampled.pcd",
         "field_width": 28.0,
         "field_height": 15.0,
     }
@@ -93,7 +93,7 @@ STD_MAP_PATH = os.path.join(PROJECT_ROOT, _scene["std_map"])
 PFA_MAP_2025_PATH = os.path.join(PROJECT_ROOT, _scene["pfa_map"])
 PFA_MAP_RED_PATH = os.path.join(PROJECT_ROOT, _scene.get("pfa_map_red", _scene["pfa_map"]))
 PFA_MAP_BLUE_PATH = os.path.join(PROJECT_ROOT, _scene.get("pfa_map_blue", _scene["pfa_map"]))
-PFA_MAP_MASK_2025_PATH = os.path.join(MAP_DIR, "pfa_map_mask_2025.jpg")
+PFA_MAP_MASK_2025_PATH = os.path.join(MAP_DIR, "competition_2026", "pfa_map_mask_2025.jpg")
 
 PCD_FILE_PATH = os.path.join(PROJECT_ROOT, _scene["pcd_file"])
 PCD_DOWNSAMPLED_PATH = os.path.join(PROJECT_ROOT, _scene["downsampled_pcd"])

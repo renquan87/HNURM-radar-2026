@@ -29,7 +29,7 @@ import cv2
 # 路径
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.normpath(os.path.join(SCRIPT_DIR, ".."))
-BEV_PATH = os.path.join(PROJECT_ROOT, "map", "lab_bev.png")
+BEV_PATH = os.path.join(PROJECT_ROOT, "data", "maps", "archive", "lab_bev.png")
 CALIB_OUTPUT = os.path.join(PROJECT_ROOT, "configs", "bev_calib.json")
 
 # 标定数据
@@ -291,7 +291,7 @@ def save_calibration():
         "resolution_y": float(sy),
         "reprojection_errors_m": [round(e, 4) for e in errors],
         "mean_error_m": round(float(np.mean(errors)), 4),
-        "bev_image": "map/lab_bev.png",
+        "bev_image": "data/maps/archive/lab_bev.png",
     }
 
     # 计算 BEV 图像覆盖的真实尺寸
@@ -321,7 +321,7 @@ def save_calibration():
     update_main_config(field_w, field_h)
 
     # 也保存一份带坐标轴的预览图
-    preview_path = os.path.join(PROJECT_ROOT, "map", "lab_bev_calibrated.png")
+    preview_path = os.path.join(PROJECT_ROOT, "data", "maps", "archive", "lab_bev_calibrated.png")
     img_preview = img_orig.copy()
     M_inv = compute_affine_inverse()
     if M_inv is not None:

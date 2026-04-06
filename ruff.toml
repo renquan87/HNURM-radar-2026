@@ -1,0 +1,130 @@
+# ============================================================
+# ruff 配置 — HNU RM 雷达站项目
+# 文档: https://docs.astral.sh/ruff/configuration/
+# ============================================================
+
+# 目标 Python 版本（Ubuntu 22.04 系统 Python）
+target-version = "py310"
+
+# 行长度限制（与 black 默认一致）
+line-length = 120
+
+# ── 需要检查的目录 ──
+src = ["src"]
+
+# ── 排除目录 ──
+# 第三方代码、构建产物、生成文件不检查
+exclude = [
+    # 第三方内嵌库（海康 SDK 绑定 + ultralytics 修改版）
+    "src/hnurm_radar/ultralytics",
+    "src/hnurm_radar/hnurm_radar/Camera/MvImport",
+
+    # 第三方 ROS2 / SDK 包（非本项目代码）
+    "src/livox_ros_driver2",
+    "src/Livox-SDK2",
+    "src/Quatro",
+
+    # colcon 构建产物
+    "build",
+    "install",
+    "log",
+
+    # 常规排除
+    "__pycache__",
+    "*.egg-info",
+    ".eggs",
+]
+
+# ============================================================
+# Lint 规则配置
+# ============================================================
+[lint]
+# 初始规则集 — 从宽松开始，逐步收紧
+# 参考: https://docs.astral.sh/ruff/rules/
+select = [
+    "F",      # pyflakes — 未使用 import/变量、语法错误等
+    "E",      # pycodestyle errors — 基本代码风格错误
+    "W",      # pycodestyle warnings — 代码风格警告
+    "I",      # isort — import 排序
+    "UP",     # pyupgrade — Python 版本升级建议
+    "B",      # flake8-bugbear — 常见 bug 模式
+    "SIM",    # flake8-simplify — 可简化的代码模式
+    "RUF",    # ruff 自有规则
+]
+
+# 暂时忽略的规则（现有代码量大，先不强制）
+ignore = [
+    # ── 代码风格类（现有代码不统一，暂不强制） ──
+    "E501",   # 行过长 — 由 formatter 处理，lint 不重复报
+    "E402",   # module level import not at top — ROS2 节点常见模式
+    "E741",   # ambiguous variable name (l, O, I) — 数学公式中常用
+
+    # ── import 相关 ──
+    "F401",   # unused import — 需要逐步清理，先不阻断
+    "F841",   # unused variable — 需要逐步清理
+
+    # ── bugbear ──
+    "B006",   # mutable default argument — 现有代码较多此模式
+    "B007",   # unused loop variable — 常见于 ROS callback
+    "B905",   # zip without strict= — Python 3.10 新增，暂不强制
+
+    # ── simplify ──
+    "SIM108",  # use ternary operator — 可读性权衡
+
+    # ── pyupgrade ──
+    "UP015",  # unnecessary open mode 'r' — 显式写出更清晰
+    "UP035",  # deprecated typing import — 需要 Python 3.9+
+
+    # ── ruff ──
+    "RUF001", # ambiguous unicode — 中文注释中常见
+    "RUF002", # ambiguous unicode in docstring
+    "RUF003", # ambiguous unicode in comment
+    "RUF012", # mutable class variable — dataclass 外常用
+]
+
+# 允许自动修复的规则类别
+fixable = ["ALL"]
+unfixable = []
+
+[lint.per-file-ignores]
+# 测试文件可以更宽松
+"test_*.py" = ["F401", "F811", "E501"]
+"**/test/*.py" = ["F401", "F811", "E501"]
+
+# 脚本文件允许 print
+"scripts/*.py" = ["T201"]
+
+# __init__.py 允许未使用 import（re-export 模式）
+"__init__.py" = ["F401"]
+
+# launch 文件（ROS2 特殊格式）
+"**/launch/*.py" = ["F401", "E402"]
+
+# EKF 第三方移植代码
+"src/ekf/ekf/tinyekf/*.py" = ["ALL"]
+"src/ekf/ekf/RobotEKF/*.py" = ["ALL"]
+
+# core/ 抽象基类：有意提供空默认实现的可选覆写方法
+"**/core/base_*.py" = ["B027"]
+"**/core/sensor_interface.py" = ["B027"]
+
+[lint.isort]
+# import 排序配置
+known-first-party = ["hnurm_radar", "ekf"]
+known-third-party = ["rclpy", "cv2", "numpy", "torch", "open3d"]
+
+# ============================================================
+# Formatter 配置（等同于 black）
+# ============================================================
+[format]
+# 使用双引号（与 black 默认一致）
+quote-style = "double"
+
+# 缩进使用空格
+indent-style = "space"
+
+# Unix 风格换行
+line-ending = "lf"
+
+# 魔术尾逗号保留（与 black 一致）
+skip-magic-trailing-comma = false

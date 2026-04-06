@@ -23,12 +23,12 @@ import os
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # ============ 输入 ============
-ORIG_BEV_PATH = os.path.join(PROJECT_ROOT, "map", "lab_bev.png")
+ORIG_BEV_PATH = os.path.join(PROJECT_ROOT, "data", "maps", "archive", "lab_bev.png")
 ORIG_CALIB_PATH = os.path.join(PROJECT_ROOT, "configs", "bev_calib.json")
 
 # ============ 输出 ============
-NEW_MAP_PATH = os.path.join(PROJECT_ROOT, "map", "lab_map_28x15.png")
-NEW_GRID_MAP_PATH = os.path.join(PROJECT_ROOT, "map", "lab_map_28x15_grid.png")
+NEW_MAP_PATH = os.path.join(PROJECT_ROOT, "data", "maps", "lab", "lab_map_28x15.png")
+NEW_GRID_MAP_PATH = os.path.join(PROJECT_ROOT, "data", "maps", "lab", "lab_map_28x15_grid.png")
 NEW_CALIB_PATH = os.path.join(PROJECT_ROOT, "configs", "bev_calib_lab.json")
 
 # ============ 已知参数 ============
@@ -218,7 +218,7 @@ def main():
         "px_height": TARGET_PX_H,
         "scale_px_per_m": SCALE,
         "original_image": {
-            "path": "map/lab_bev.png",
+            "path": "data/maps/archive/lab_bev.png",
             "size_px": [orig_w, orig_h],
             "size_m": [ORIG_FIELD_W, ORIG_FIELD_H],
             "ppm_x": round(orig_ppm_x, 2),
@@ -231,8 +231,8 @@ def main():
             "crop_h": crop_h
         },
         "calibration_points_mapping": new_points,
-        "bev_image": "map/lab_map_28x15.png",
-        "grid_image": "map/lab_map_28x15_grid.png"
+        "bev_image": "data/maps/lab/lab_map_28x15.png",
+        "grid_image": "data/maps/lab/lab_map_28x15_grid.png"
     }
 
     with open(NEW_CALIB_PATH, 'w', encoding='utf-8') as f:

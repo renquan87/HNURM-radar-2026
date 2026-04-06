@@ -391,15 +391,15 @@ def main():
         scene = cfg.get("global", {}).get("scene", "competition")
         sc = cfg.get("scenes", {}).get(scene, {})
         if pcd_path is None:
-            pcd_path = os.path.join(PROJECT_ROOT, sc.get("pcd_file", "data/pcds.pcd"))
+            pcd_path = os.path.join(PROJECT_ROOT, sc.get("pcd_file", "data/pointclouds/registration/pcds.pcd"))
         if map_path is None:
-            map_path = os.path.join(PROJECT_ROOT, sc.get("std_map", "map/std_map.png"))
+            map_path = os.path.join(PROJECT_ROOT, sc.get("std_map", "data/maps/competition_2026/std_map.png"))
         dr = sc.get("downsampled_pcd")
         down_path = os.path.join(PROJECT_ROOT, dr) if dr else None
     except Exception as e:
         print(f"配置读取失败: {e}")
-        if not pcd_path: pcd_path = os.path.join(PROJECT_ROOT, "data/lab_pcds.pcd")
-        if not map_path: map_path = os.path.join(PROJECT_ROOT, "map/lab_map_28x15.png")
+        if not pcd_path: pcd_path = os.path.join(PROJECT_ROOT, "data/pointclouds/registration/lab_pcds.pcd")
+        if not map_path: map_path = os.path.join(PROJECT_ROOT, "data/maps/lab/lab_map_28x15.png")
 
     for p, n in [(pcd_path, "PCD"), (map_path, "地图")]:
         if not os.path.exists(p):

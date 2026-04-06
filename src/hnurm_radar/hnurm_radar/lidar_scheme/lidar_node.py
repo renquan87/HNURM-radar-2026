@@ -22,7 +22,7 @@ lidar_node.py — 激光雷达点云接收与预处理节点（方案二）
   - min_distance:        近距离滤除阈值（m），默认 1
   - max_distance:        远距离滤除阈值（m），默认 40
   - lidar_topic_name:    点云话题名，默认 "/livox/lidar"
-  - background_map_path: 背景点云路径，默认 "data/background.pcd"
+  - background_map_path: 背景点云路径，默认 "data/pointclouds/background/background.pcd"
   - background_threshold:背景减除距离阈值（m），默认 0.2
   - voxel_size:          背景地图降采样体素大小（m），默认 0.1
   - publish_projected:   是否发布背景减除后的点云，默认 True
@@ -109,7 +109,7 @@ class LidarListener(Node):
 
         default_background_path = lidar_cfg.get(
             "background_map_path",
-            os.path.join("data", os.path.basename(os.path.join(DATA_DIR, "background.pcd")))
+            os.path.join("data", "pointclouds", "background", "background.pcd")
         )
         self.declare_parameter('background_map_path', default_background_path)
         self.declare_parameter('background_threshold', lidar_cfg.get('background_threshold', 0.2))

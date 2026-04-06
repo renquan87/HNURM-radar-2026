@@ -18,10 +18,10 @@ def _load_scene_pcd_paths(project_root):
     """从 main_config.yaml 读取当前场景的 PCD 路径。
 
     返回 (pcd_file, downsampled_pcd_file) 的绝对路径元组。
-    读取失败时回退到默认的 data/pcds*.pcd。
+    读取失败时回退到默认的 data/pointclouds/registration/pcds*.pcd。
     """
-    pcd_rel = "data/pcds.pcd"
-    down_rel = "data/pcds_downsampled.pcd"
+    pcd_rel = "data/pointclouds/registration/pcds.pcd"
+    down_rel = "data/pointclouds/registration/pcds_downsampled.pcd"
     try:
         from ruamel.yaml import YAML
         yaml = YAML()

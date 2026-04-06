@@ -556,7 +556,8 @@ class AirTargetNode(Node):
           air_debug/cluster_markers — 包围盒 + 文本标注 (MarkerArray)
         """
         header = Header()
-        header.stamp = self.get_clock().now().to_msg()
+        # 使用零时间戳，让 RViz 使用最新可用的 TF 变换
+        # 避免 "Lookup would require extrapolation into the future" 导致闪烁
         header.frame_id = 'livox'
 
         fields_xyz = [
@@ -634,11 +635,14 @@ class AirTargetNode(Node):
         if _HAS_VIZ_MARKERS and hasattr(self, 'pub_debug_markers'):
             target_map = {id(t.points): t for t in targets}
             ma = MarkerArray()
-            clr = Marker()
-            clr.header = header
-            clr.ns = 'air_clusters'
-            clr.action = Marker.DELETEALL
-            ma.markers.append(clr)
+            n_clusters = len(all_clusters)
+
+            # lifetime 设为处理周期的 3 倍，避免因周期抖动而提前过期闪烁
+            try:
+                _lt_sec = int(3.0 / max(self.air_cfg.publish_rate, 1.0)) + 1
+            except Exception:
+                _lt_sec = 3
+
             for i, cpts in enumerate(all_clusters):
                 is_ok = id(cpts) in accepted_ids
                 t = target_map.get(id(cpts))
@@ -667,7 +671,7 @@ class AirTargetNode(Node):
                 else:
                     m.color.r, m.color.g, m.color.b = 0.9, 0.2, 0.2   # 红色
                 m.color.a = 0.35
-                m.lifetime.sec = 1
+                m.lifetime.sec = _lt_sec
                 ma.markers.append(m)
 
                 # 文本标注
@@ -689,8 +693,21 @@ class AirTargetNode(Node):
                     sz = bbox_max - bbox_min
                     max_dim = float(sz.max())
                     txt.text = f'#{i} n={n_pts} sz={max_dim:.1f} \u2717'
-                txt.lifetime.sec = 1
+                txt.lifetime.sec = _lt_sec
                 ma.markers.append(txt)
+
+            # 清理多余的旧 marker（避免使用 DELETEALL 导致闪烁）
+            prev_count = getattr(self, '_prev_marker_count', 0)
+            for j in range(n_clusters, prev_count):
+                for ns in ('air_bbox', 'air_labels'):
+                    del_m = Marker()
+                    del_m.header = header
+                    del_m.ns = ns
+                    del_m.id = j
+                    del_m.action = Marker.DELETE
+                    ma.markers.append(del_m)
+            self._prev_marker_count = n_clusters
+
             self.pub_debug_markers.publish(ma)
 
     # ------------------------------------------------------------------ #

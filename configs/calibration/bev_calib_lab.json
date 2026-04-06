@@ -13,7 +13,7 @@
   "px_height": 1500,
   "scale_px_per_m": 100.0,
   "original_image": {
-    "path": "map/lab_bev.png",
+    "path": "data/maps/archive/lab_bev.png",
     "size_px": [
       2551,
       2185
@@ -108,6 +108,6 @@
       ]
     }
   ],
-  "bev_image": "map/lab_map_28x15.png",
-  "grid_image": "map/lab_map_28x15_grid.png"
+  "bev_image": "data/maps/lab/lab_map_28x15.png",
+  "grid_image": "data/maps/lab/lab_map_28x15_grid.png"
 }

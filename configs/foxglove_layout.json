@@ -1,0 +1,717 @@
+{
+  "configById": {
+    "3D!1": {
+      "cameraState": {
+        "perspective": true,
+        "distance": 12.604988194490128,
+        "phi": 76.57707441324085,
+        "thetaOffset": 97.70171149496005,
+        "targetOffset": [
+          15.029612586846067,
+          6.186736070414696,
+          -5.436523860697489e-16
+        ],
+        "target": [
+          4,
+          4,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000,
+        "logDepth": false
+      },
+      "followTf": "map",
+      "scene": {
+        "backgroundColor": "#000000",
+        "enableStats": false,
+        "ignoreColladaUpAxis": false,
+        "syncCamera": false
+      },
+      "topics": {
+        "/lidar_pcds": {
+          "visible": true,
+          "colorMode": "flat",
+          "colorField": "z",
+          "pointSize": 1,
+          "colorMap": "rainbow",
+          "pointShape": "square",
+          "flatColor": "#fabcbcff",
+          "stixelsEnabled": false
+        },
+        "/target_pointcloud": {
+          "visible": true,
+          "colorMode": "colormap",
+          "flatColor": "#ff6600",
+          "pointSize": 4,
+          "colorField": "z",
+          "colorMap": "rainbow",
+          "pointShape": "square"
+        },
+        "/global_pcd_map": {
+          "visible": true,
+          "colorMode": "flat",
+          "flatColor": "#ffffffff",
+          "pointSize": 1,
+          "colorField": "z",
+          "colorMap": "rainbow",
+          "pointShape": "circle"
+        },
+        "air_debug/cluster_points": {
+          "visible": true,
+          "colorMode": "rgb",
+          "pointSize": 6
+        },
+        "air_debug/cluster_markers": {
+          "visible": true
+        },
+        "air_debug/air_points": {
+          "visible": true,
+          "colorMode": "flat",
+          "flatColor": "#00ccff",
+          "pointSize": 4
+        },
+        "/tf": {
+          "visible": true
+        },
+        "/livox/lidar": {
+          "visible": false,
+          "colorField": "intensity",
+          "colorMode": "colormap",
+          "colorMap": "turbo"
+        },
+        "/map_view": {
+          "visible": true
+        },
+        "/move_base_simple/goal": {
+          "visible": true
+        },
+        "/pcd_removed": {
+          "visible": false,
+          "colorField": "z",
+          "colorMode": "colormap",
+          "colorMap": "turbo"
+        }
+      },
+      "followMode": "follow-pose",
+      "transforms": {},
+      "layers": {},
+      "publish": {
+        "type": "pose_estimate",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "imageMode": {}
+    },
+    "Image!mqcm65": {
+      "cameraState": {
+        "distance": 20,
+        "perspective": true,
+        "phi": 60,
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "thetaOffset": 45,
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {},
+      "transforms": {},
+      "topics": {},
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "imageMode": {
+        "imageTopic": "/map_view"
+      }
+    },
+    "Image!2": {
+      "cameraTopic": "/map_view",
+      "transformMarkers": {},
+      "cameraState": {
+        "distance": 20,
+        "perspective": true,
+        "phi": 60,
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "thetaOffset": 45,
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {},
+      "transforms": {},
+      "topics": {},
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "imageMode": {
+        "imageTopic": "/detect_view"
+      }
+    },
+    "Image!31rekhe": {
+      "cameraTopic": "/map_view",
+      "transformMarkers": {},
+      "cameraState": {
+        "distance": 20,
+        "perspective": true,
+        "phi": 60,
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "thetaOffset": 45,
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {},
+      "transforms": {},
+      "topics": {},
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "imageMode": {
+        "imageTopic": "/map_view"
+      }
+    },
+    "Plot!1": {
+      "title": "EKF 滤波后坐标 (X)",
+      "paths": [
+        {
+          "value": "/ekf_location_filtered.locs[0].x",
+          "label": "[0] X",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_location_filtered.locs[1].x",
+          "label": "[1] X",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_location_filtered.locs[2].x",
+          "label": "[2] X",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_location_filtered.locs[3].x",
+          "label": "[3] X",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_location_filtered.locs[4].x",
+          "label": "[4] X",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_location_filtered.locs[5].x",
+          "label": "[5] X",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_location_filtered.locs[6].x",
+          "label": "[6] X",
+          "enabled": true
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "showLegend": false,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "sidebarDimension": 240
+    },
+    "Plot!3": {
+      "title": "原始检测坐标 (X，未滤波)",
+      "paths": [
+        {
+          "value": "/location.locs[0].x",
+          "label": "[0] X",
+          "enabled": true
+        },
+        {
+          "value": "/location.locs[1].x",
+          "label": "[1] X",
+          "enabled": true
+        },
+        {
+          "value": "/location.locs[2].x",
+          "label": "[2] X",
+          "enabled": true
+        },
+        {
+          "value": "/location.locs[3].x",
+          "label": "[3] X",
+          "enabled": true
+        },
+        {
+          "value": "/location.locs[4].x",
+          "label": "[4] X",
+          "enabled": true
+        },
+        {
+          "value": "/location.locs[5].x",
+          "label": "[5] X",
+          "enabled": true
+        },
+        {
+          "value": "/location.locs[6].x",
+          "label": "[6] X",
+          "enabled": true
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "showLegend": false,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "sidebarDimension": 240
+    },
+    "Plot!2": {
+      "title": "EKF 滤波后坐标 (Y)",
+      "paths": [
+        {
+          "value": "/ekf_location_filtered.locs[0].y",
+          "label": "[0] Y",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_location_filtered.locs[1].y",
+          "label": "[1] Y",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_location_filtered.locs[2].y",
+          "label": "[2] Y",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_location_filtered.locs[3].y",
+          "label": "[3] Y",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_location_filtered.locs[4].y",
+          "label": "[4] Y",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_location_filtered.locs[5].y",
+          "label": "[5] Y",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_location_filtered.locs[6].y",
+          "label": "[6] Y",
+          "enabled": true
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "showLegend": false,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "sidebarDimension": 240
+    },
+    "Plot!4": {
+      "title": "原始检测坐标 (Y，未滤波)",
+      "paths": [
+        {
+          "value": "/location.locs[0].y",
+          "label": "[0] Y",
+          "enabled": true
+        },
+        {
+          "value": "/location.locs[1].y",
+          "label": "[1] Y",
+          "enabled": true
+        },
+        {
+          "value": "/location.locs[2].y",
+          "label": "[2] Y",
+          "enabled": true
+        },
+        {
+          "value": "/location.locs[3].y",
+          "label": "[3] Y",
+          "enabled": true
+        },
+        {
+          "value": "/location.locs[4].y",
+          "label": "[4] Y",
+          "enabled": true
+        },
+        {
+          "value": "/location.locs[5].y",
+          "label": "[5] Y",
+          "enabled": true
+        },
+        {
+          "value": "/location.locs[6].y",
+          "label": "[6] Y",
+          "enabled": true
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "showLegend": false,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "sidebarDimension": 240
+    },
+    "Plot!5": {
+      "title": "EKF 新息范数 (innovation_norm)",
+      "paths": [
+        {
+          "value": "/ekf_diagnostics.slots[0].innovation_norm",
+          "label": "slot0",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_diagnostics.slots[1].innovation_norm",
+          "label": "slot1",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_diagnostics.slots[2].innovation_norm",
+          "label": "slot2",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_diagnostics.slots[3].innovation_norm",
+          "label": "slot3",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_diagnostics.slots[4].innovation_norm",
+          "label": "slot4",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_diagnostics.slots[5].innovation_norm",
+          "label": "slot5",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_diagnostics.slots[6].innovation_norm",
+          "label": "slot6",
+          "enabled": true
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "showLegend": false,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "sidebarDimension": 240
+    },
+    "Plot!7": {
+      "title": "位置抖动 Jitter (m)",
+      "paths": [
+        {
+          "value": "/ekf_diagnostics.slots[0].jitter",
+          "label": "slot0",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_diagnostics.slots[1].jitter",
+          "label": "slot1",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_diagnostics.slots[2].jitter",
+          "label": "slot2",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_diagnostics.slots[3].jitter",
+          "label": "slot3",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_diagnostics.slots[4].jitter",
+          "label": "slot4",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_diagnostics.slots[5].jitter",
+          "label": "slot5",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_diagnostics.slots[6].jitter",
+          "label": "slot6",
+          "enabled": true
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "showLegend": false,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "sidebarDimension": 240
+    },
+    "Plot!6": {
+      "title": "检测频率 (Hz)",
+      "paths": [
+        {
+          "value": "/ekf_diagnostics.slots[0].detection_rate_hz",
+          "label": "slot0",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_diagnostics.slots[1].detection_rate_hz",
+          "label": "slot1",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_diagnostics.slots[2].detection_rate_hz",
+          "label": "slot2",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_diagnostics.slots[3].detection_rate_hz",
+          "label": "slot3",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_diagnostics.slots[4].detection_rate_hz",
+          "label": "slot4",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_diagnostics.slots[5].detection_rate_hz",
+          "label": "slot5",
+          "enabled": true
+        },
+        {
+          "value": "/ekf_diagnostics.slots[6].detection_rate_hz",
+          "label": "slot6",
+          "enabled": true
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "showLegend": false,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "sidebarDimension": 240
+    },
+    "RawMessages!4": {
+      "topicPath": "air_debug/stats",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 12
+    },
+    "RawMessages!1": {
+      "topicPath": "/location",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 12
+    },
+    "RawMessages!2": {
+      "topicPath": "/ekf_location_filtered",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 12
+    },
+    "RawMessages!3": {
+      "topicPath": "/detect_result",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 12
+    },
+    "RawMessages!5": {
+      "topicPath": "/ekf_diagnostics",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 12,
+      "expansion": {
+        "stamp": "e",
+        "slots": "e",
+        "0~slots": "c",
+        "1~slots": "e",
+        "2~slots": "e",
+        "3~slots": "e",
+        "4~slots": "e",
+        "5~slots": "e",
+        "6~slots": "e"
+      }
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": {
+    "direction": "row",
+    "first": {
+      "first": "3D!1",
+      "second": {
+        "first": "Image!mqcm65",
+        "second": {
+          "first": "Image!2",
+          "second": "Image!31rekhe",
+          "direction": "column"
+        },
+        "direction": "row",
+        "splitPercentage": 2
+      },
+      "direction": "column",
+      "splitPercentage": 35.44948213402276
+    },
+    "second": {
+      "direction": "column",
+      "first": {
+        "first": {
+          "first": "Plot!1",
+          "second": "Plot!3",
+          "direction": "row"
+        },
+        "second": {
+          "first": "Plot!2",
+          "second": "Plot!4",
+          "direction": "row"
+        },
+        "direction": "column",
+        "splitPercentage": 48.82839580348477
+      },
+      "second": {
+        "direction": "column",
+        "first": {
+          "first": "Plot!5",
+          "second": {
+            "first": "Plot!7",
+            "second": {
+              "first": "Plot!6",
+              "second": "RawMessages!4",
+              "direction": "row"
+            },
+            "direction": "row",
+            "splitPercentage": 33.78196500672948
+          },
+          "direction": "row",
+          "splitPercentage": 24.415055951169894
+        },
+        "second": {
+          "direction": "row",
+          "first": {
+            "direction": "row",
+            "first": "RawMessages!1",
+            "second": "RawMessages!2",
+            "splitPercentage": 50
+          },
+          "second": {
+            "direction": "row",
+            "first": "RawMessages!3",
+            "second": "RawMessages!5",
+            "splitPercentage": 50.3448275862069
+          },
+          "splitPercentage": 42.31943031536113
+        },
+        "splitPercentage": 31.825273010920448
+      },
+      "splitPercentage": 34.53025007580472
+    },
+    "splitPercentage": 37.344913151364764
+  }
+}

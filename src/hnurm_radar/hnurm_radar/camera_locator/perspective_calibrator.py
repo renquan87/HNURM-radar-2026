@@ -51,6 +51,7 @@ from ..shared.paths import (
     PFA_MAP_2025_PATH, PFA_MAP_RED_PATH, PFA_MAP_BLUE_PATH,
     TEST_RESOURCES_DIR,
     FIELD_WIDTH, FIELD_HEIGHT,
+    resolve_path,
 )
 MAIN_CONFIG_PATH = _MAIN_CONFIG_PATH
 PERSPECTIVE_CALIB_PATH = _PERSPECTIVE_CALIB_PATH
@@ -563,10 +564,13 @@ def main():
     my_color = cfg['global'].get('my_color', 'Blue')
     camera_cfg = cfg.get('camera', {})
     camera_mode = camera_cfg.get('mode', 'test')
-    video_source = camera_cfg.get('video_source', 0)
-    test_img_path = camera_cfg.get(
+    _raw_video_source = camera_cfg.get('video_source', 0)
+    # 字符串路径需要 resolve_path() 解析相对路径；整数（USB 设备号）直接使用
+    video_source = (resolve_path(str(_raw_video_source))
+                    if isinstance(_raw_video_source, str) else _raw_video_source)
+    test_img_path = resolve_path(camera_cfg.get(
         'test_image',
-        os.path.join(TEST_RESOURCES_DIR, 'test1.jpg'))
+        os.path.join(TEST_RESOURCES_DIR, 'test1.jpg')))
 
     global camera_image
 

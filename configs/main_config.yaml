@@ -13,29 +13,29 @@ global:
 # 切换场景只需修改 global.scene，无需替换文件
 scenes:
   competition:
-    std_map: "map/std_map.png"              # 方案二display_panel 底图
-    pfa_map: "map/pfa_map_2025.jpg"         # 方案一透视标定用地图（通用）
-    pfa_map_red: "map/pfa_map_red_2025.jpg"   # 红方视角地图（标定/小地图用）
-    pfa_map_blue: "map/pfa_map_blue_2025.jpg" # 蓝方视角地图（标定/小地图用）
-    pcd_file: "data/pcds.pcd"               # 点云地图
-    downsampled_pcd: "data/pcds_downsampled.pcd"
+    std_map: "data/maps/competition_2026/std_map.png"              # 方案二display_panel 底图
+    pfa_map: "data/maps/competition_2026/pfa_map_2025.jpg"         # 方案一透视标定用地图（通用）
+    pfa_map_red: "data/maps/competition_2026/pfa_map_red_2025.jpg"   # 红方视角地图（标定/小地图用）
+    pfa_map_blue: "data/maps/competition_2026/pfa_map_blue_2025.jpg" # 蓝方视角地图（标定/小地图用）
+    pcd_file: "data/pointclouds/registration/pcds.pcd"               # 点云地图
+    downsampled_pcd: "data/pointclouds/registration/pcds_downsampled.pcd"
     field_width: 28.0                       # 赛场宽度(m)
     field_height: 15.0                      # 赛场高度(m)
   lab:
-    std_map: "map/lab_map_28x15.png"        # 实验室 display_panel 底图（裁剪后2800×1500）
-    std_map_grid: "map/lab_map_28x15_grid.png"  # 带坐标网格的版本（调试用）
-    pfa_map: "map/lab_map_28x15.png"        # 实验室透视标定用地图
-    pcd_file: "data/lab_pcds.pcd"           # 实验室点云地图
-    downsampled_pcd: "data/lab_pcds_downsampled.pcd"  # 实验室降采样点云地图
+    std_map: "data/maps/lab/lab_map_28x15.png"        # 实验室 display_panel 底图（裁剪后2800×1500）
+    std_map_grid: "data/maps/lab/lab_map_28x15_grid.png"  # 带坐标网格的版本（调试用）
+    pfa_map: "data/maps/lab/lab_map_28x15.png"        # 实验室透视标定用地图
+    pcd_file: "data/pointclouds/registration/lab_pcds.pcd"           # 实验室点云地图
+    downsampled_pcd: "data/pointclouds/registration/lab_pcds_downsampled.pcd"  # 实验室降采样点云地图
     field_width: 28.0                       # 由标定工具自动更新
     field_height: 15.0                      # 由标定工具自动更新
 
 # 相机输入配置（仅用于纯相机透视变换方案 camera_detector）
 camera:
-  mode: "video"               # "test": 测试模式(静态图片) | "video": USB摄像头/视频文件 | "hik": 海康工业相机
+  mode: "hik"               # "test": 测试模式(静态图片) | "video": USB摄像头/视频文件 | "hik": 海康工业相机
   exposure_time: 15000.0       # 曝光时间(μs)。室内建议 15000~25000，室外/赛场建议 5000~10000。过大=过曝，过小=欠曝
   gain: 20.0                  # 增益(dB)。越大越亮但噪点越多。建议范围 10~25
-  video_source: /data/projects/radar/hnurm_radar/test_resources/7.27-华东理工-00.04.40.729-00.28.10.978-seg2.mp4             # video 模式下的输入源：0=USB摄像头, 或视频文件路径如 "/path/to/video.mp4"
+  video_source: "test_resources/7.27-华东理工-00.04.40.729-00.28.10.978-seg2.mp4"  # video 模式下的输入源：0=USB摄像头, 或视频文件路径如 "test_resources/video.mp4"（相对于项目根目录）
   test_image: "test_resources/red1.png"  # test 模式下使用的图片路径（相对于项目根目录）
 
 
@@ -47,7 +47,7 @@ lidar:
   min_distance: 1 # 去除距离在这个范围以内的接收点云
   max_distance: 40 # 去除距离在这个范围以外的接收点云
   lidar_topic_name: "/livox/lidar" # 点云发布话题名字
-  background_map_path: "data/background.pcd" # 背景点云地图路径（相对项目根目录）
+  background_map_path: "data/pointclouds/background/background.pcd" # 背景点云地图路径（相对项目根目录）
   background_threshold: 0.2 # 背景减除阈值（米）
   voxel_size: 0.1 # 背景地图降采样体素大小（米）
   publish_projected: true # 是否发布背景减除后的点云到 target_pointcloud

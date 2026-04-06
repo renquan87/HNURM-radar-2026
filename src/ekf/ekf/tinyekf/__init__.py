@@ -107,7 +107,8 @@ class EKF(object):
 
         # zz_k: 由状态转测量值函数stateToMeasurementTransitionFunction返回的值
         # (4). X^_k = X_k + K_k * (z_k - zz_k)    # Note:  此处的zz_k = H_k * X_k)
-        self.x += np.dot(K_k, (np.array(z) - zz_k))
+        self.innovation = np.array(z) - zz_k   # 保存新息向量，供外部诊断读取
+        self.x += np.dot(K_k, self.innovation)
 
         # 最后,最优预测协方差矩阵
         # (5). P^_k = P_k - K_k * H_k * P_k = (I - K_k * H_k) * P_k

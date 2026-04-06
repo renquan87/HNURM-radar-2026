@@ -28,9 +28,9 @@ from ultralytics import YOLO
 # ── 默认路径 ──────────────────────────────────────────────
 BASE = os.path.join(os.path.dirname(__file__), '..')
 DEFAULT_IMAGE   = os.path.join(BASE, 'test_resources', 'red1.png')
-STAGE_ONE_PATH  = os.path.join(BASE, 'weights', 'stage_one.pt')
-STAGE_TWO_PATH  = os.path.join(BASE, 'weights', 'stage_two.pt')
-STAGE_THREE_PATH = os.path.join(BASE, 'weights', 'stage_three.pt')
+STAGE_ONE_PATH  = os.path.join(BASE, 'data', 'weights', 'stage_one', 'stage_one.pt')
+STAGE_TWO_PATH  = os.path.join(BASE, 'data', 'weights', 'stage_two', 'stage_two.pt')
+STAGE_THREE_PATH = os.path.join(BASE, 'data', 'weights', 'stage_three', 'stage_three.pt')
 
 # 类别标签（与 detector_config.yaml 一致）
 LABELS = ["B1", "B2", "B3", "B4", "B5", "B7",

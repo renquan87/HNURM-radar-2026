@@ -1,8 +1,8 @@
-# 路径使用相对于项目根目录的相对路径，代码会自动解析为绝对路径
+# 路径使用相对于项目根目录的相对路径，代码会自动通过 paths.resolve_path() 解析为绝对路径
 path:
-  stage_one_path:  "weights/stage_one.engine"
-  stage_two_path: "weights/stage_two.engine"
-  stage_three_path: "weights/stage_three.engine"
+  stage_one_path:  "data/weights/stage_one/stage_one.pt"
+  stage_two_path:  "data/weights/stage_two/stage_two.pt"
+  stage_three_path: "data/weights/stage_three/stage_three.pt"
   tracker_path: "configs/bytetrack.yaml"
 
 params:
@@ -10,7 +10,19 @@ params:
   stage_one_conf: 0.1
   stage_two_conf: 0.6
   stage_three_conf: 0.5
-  life_time: 90 # 生命周期
+  life_time: 90                       # 生命周期
+  # 灰色装甲板亮度阈值（用于 Stage3 灰色判定）
+  gray_threshold:
+    blue: 35                          # 蓝方灰色阈值
+    red: 15                           # 红方灰色阈值
+    stage3: 30                        # Stage3 通用阈值
+
+# 推理/显示分辨率（detector_node 和 camera_detector 共用）
+resolution:
+  infer_width: 1920                   # 推理输入宽度
+  infer_height: 1080                  # 推理输入高度
+  display_width: 1920                 # 检测结果显示宽度
+  display_height: 1080                # 检测结果显示高度
 
 # 坐标卡尔曼滤波器参数
 filter:

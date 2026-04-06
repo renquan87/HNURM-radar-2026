@@ -11,12 +11,16 @@ find_package(ament_cmake REQUIRED)
 # further dependencies manually.
 # find_package(<dependency> REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
+find_package(builtin_interfaces REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/DetectResult.msg"
   "msg/Robots.msg"
   "msg/Location.msg"
   "msg/Locations.msg"
+  "msg/EkfDiagnostics.msg"
+  "msg/EkfDiagnosticsArray.msg"
+  DEPENDENCIES builtin_interfaces
 )
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

@@ -58,20 +58,20 @@ git lfs pull
 
 # 验证
 LFS_FILES=(
-    "weights/stage_one.pt"
-    "weights/stage_two.pt"
-    "weights/stage_three.pt"
-    "data/background.pcd"
-    "data/pcds.pcd"
-    "data/pcds_downsampled.pcd"
+    "data/weights/stage_one/stage_one.pt"
+    "data/weights/stage_two/stage_two.pt"
+    "data/weights/stage_three/stage_three.pt"
+    "data/pointclouds/background/background.pcd"
+    "data/pointclouds/registration/pcds.pcd"
+    "data/pointclouds/registration/pcds_downsampled.pcd"
 )
 
 # 可选的 lab 文件
 LFS_OPTIONAL=(
-    "data/lab_pcds.pcd"
-    "data/lab_pcds_downsampled.pcd"
-    "data/normalized_map.pcd"
-    "data/normalized_map_downsample.pcd"
+    "data/pointclouds/registration/lab_pcds.pcd"
+    "data/pointclouds/registration/lab_pcds_downsampled.pcd"
+    "data/pointclouds/registration/normalized_map.pcd"
+    "data/pointclouds/registration/normalized_map_downsample.pcd"
 )
 
 ALL_OK=true
@@ -105,7 +105,7 @@ echo "============================================"
 info "步骤 2/2: 从 .pt 导出 .engine 文件 (TensorRT)"
 echo "============================================"
 
-ENGINE_FILES=("weights/stage_one.engine" "weights/stage_two.engine" "weights/stage_three.engine")
+ENGINE_FILES=("data/weights/stage_one/stage_one.engine" "data/weights/stage_two/stage_two.engine" "data/weights/stage_three/stage_three.engine")
 NEED_EXPORT=false
 
 for eng in "${ENGINE_FILES[@]}"; do

@@ -65,4 +65,9 @@ Thumbs.db
 test_output/
 test_output/*.jpg
 test_output/*.png
-docs/
+# docs/ 目录现在纳入版本控制
+# 排除生成的文档产物
+docs/_build/
+docs/*.pdf
+docs/archive/
+docs/tmp/

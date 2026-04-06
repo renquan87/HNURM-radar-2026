@@ -69,16 +69,16 @@ def load_config():
             cfg = yaml.load(f)
         scene = cfg.get("global", {}).get("scene", "lab")
         sc = cfg.get("scenes", {}).get(scene, {})
-        pcd_path = os.path.join(PROJECT_ROOT, sc.get("pcd_file", "data/lab_pcds.pcd"))
-        map_path = os.path.join(PROJECT_ROOT, sc.get("std_map", "map/lab_map_28x15.png"))
+        pcd_path = os.path.join(PROJECT_ROOT, sc.get("pcd_file", "data/pointclouds/registration/lab_pcds.pcd"))
+        map_path = os.path.join(PROJECT_ROOT, sc.get("std_map", "data/maps/lab/lab_map_28x15.png"))
         field_w = sc.get("field_width", 28.0)
         field_h = sc.get("field_height", 15.0)
         return pcd_path, map_path, field_w, field_h
     except Exception as e:
         print(f"配置加载失败: {e}")
         return (
-            os.path.join(PROJECT_ROOT, "data/lab_pcds.pcd"),
-            os.path.join(PROJECT_ROOT, "map/lab_map_28x15.png"),
+            os.path.join(PROJECT_ROOT, "data/pointclouds/registration/lab_pcds.pcd"),
+            os.path.join(PROJECT_ROOT, "data/maps/lab/lab_map_28x15.png"),
             28.0,
             15.0,
         )

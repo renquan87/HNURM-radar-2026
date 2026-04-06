@@ -27,7 +27,7 @@ if SRC_ROOT not in sys.path:
 
 from hnurm_radar.shared.paths import DATA_DIR, resolve_path  # noqa: E402
 
-DEFAULT_OUTPUT = os.path.join(DATA_DIR, "background.pcd")
+DEFAULT_OUTPUT = os.path.join(DATA_DIR, "pointclouds", "background", "background.pcd")
 
 
 def parse_args():

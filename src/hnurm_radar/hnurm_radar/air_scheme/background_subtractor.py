@@ -4,7 +4,7 @@ background_subtractor.py — 空中目标背景减除模块（点云地图版）
 基于点云地图（map 坐标系）的背景减除方案。
 
 核心思路：
-  点云地图（pcds.pcd / lab_pcds.pcd）天然在 map 坐标系下，是静态场景的精确描述。
+  点云地图（registration/pcds.pcd / lab_pcds.pcd）天然在 map 坐标系下，是静态场景的精确描述。
   实时点云通过 ICP/KISS-ICP 提供的 livox→map TF 变换到 map 坐标系后，
   与点云地图做最近邻匹配——距离 < 阈值的点即为背景，删除之。
 

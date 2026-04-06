@@ -11,8 +11,8 @@ air_visualize_clusters.py — 空中目标检测可视化工具
   - 支持模拟多帧跟踪序列（--frames 参数）
 
 用法：
-  python scripts/air_visualize_clusters.py --pcd data/lab_pcds.pcd
-  python scripts/air_visualize_clusters.py --pcd data/lab_pcds.pcd --show-raw
+  python scripts/air_visualize_clusters.py --pcd data/pointclouds/registration/lab_pcds.pcd
+  python scripts/air_visualize_clusters.py --pcd data/pointclouds/registration/lab_pcds.pcd --show-raw
   python scripts/air_visualize_clusters.py --pcd data/frame0.pcd --frames frame0.pcd frame1.pcd ...
 """
 
