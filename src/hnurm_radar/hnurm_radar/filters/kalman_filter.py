@@ -184,7 +184,11 @@ class EnhancedKalmanFilter:
     def time_since_update(self):
         """返回距上次更新的秒数"""
         return time.time() - self.last_update_time
-
+    def get_position(self):
+        """返回当前滤波后的位置 (x, y) 或 None（未初始化）"""
+        if self.initialized:
+            return self.kf.statePost[0, 0], self.kf.statePost[1, 0]
+        return None
 
 class KalmanFilterWrapper:
     """
@@ -255,3 +259,4 @@ class KalmanFilterWrapper:
             self.filters.pop(car_id, None)
         else:
             self.filters.clear()
+

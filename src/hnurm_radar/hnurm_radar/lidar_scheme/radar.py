@@ -15,6 +15,7 @@ radar.py — 激光雷达方案的融合定位节点（方案二）
 配置文件：
   - configs/main_config.yaml      — 全局颜色、调试开关
   - configs/converter_config.yaml — 外参 R/T、内参 K、畸变系数
+  - configs/detector_config.yaml  — 类别标签列表、卡尔曼参数等
 """
 import rclpy
 from rclpy.node import Node
@@ -34,7 +35,7 @@ from sensor_msgs.msg import PointCloud2
 from collections import deque
 from ruamel.yaml import YAML
 import os
-from ..shared.paths import MAIN_CONFIG_PATH, CONVERTER_CONFIG_PATH
+from ..shared.paths import MAIN_CONFIG_PATH, CONVERTER_CONFIG_PATH, DETECTOR_CONFIG_PATH
 from detect_result.msg import DetectResult
 from detect_result.msg import Robots
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, qos_profile_sensor_data
@@ -51,179 +52,11 @@ from sklearn.cluster import DBSCAN, KMeans
 from scipy.optimize import linear_sum_assignment
 from typing import List, Tuple, Dict, Optional
 
-# ---------------------- 扩展卡尔曼滤波器（仅用于预测） -----------------------------
-class EKFPredictor:
-    """
-    简单的 EKF 预测器，状态为 [x, y, vx, vy]，仅用于预测位置，不进行观测更新。
-    用于多目标追踪器的数据关联。
-    """
-    def __init__(self, dt=0.1):
-        self.dt = dt
-        # 状态转移矩阵
-        self.F = np.array([[1, 0, dt, 0],
-                           [0, 1, 0, dt],
-                           [0, 0, 1, 0],
-                           [0, 0, 0, 1]], dtype=np.float32)
-        # 过程噪声协方差（简易）
-        self.Q = np.eye(4, dtype=np.float32) * 0.01
-        # 状态向量 [x, y, vx, vy]
-        self.x = np.zeros((4, 1), dtype=np.float32)
-        # 协方差
-        self.P = np.eye(4, dtype=np.float32) * 1.0
+# 导入新的固定槽位追踪器
+from .tracker_enhanced import FixedSlotTracker
 
-    def predict(self):
-        """预测一步，返回预测位置 (x, y)"""
-        self.x = self.F @ self.x
-        self.P = self.F @ self.P @ self.F.T + self.Q
-        return float(self.x[0, 0]), float(self.x[1, 0])
-
-    def set_state(self, x, y, vx=0.0, vy=0.0):
-        """设置状态（由观测直接赋值）"""
-        self.x = np.array([[x], [y], [vx], [vy]], dtype=np.float32)
-
-    def get_position(self):
-        return float(self.x[0, 0]), float(self.x[1, 0])
-
-
-# ---------------------- 多目标追踪器（基于 EKF 预测，内部自建 ID） -----------------------------
-class TrackState:
-    Tentative = 0
-    Confirmed = 1
-    Deleted = 2
-
-class Track:
-    def __init__(self, internal_id: int, car_id: int, position: np.ndarray, dt=0.1, from_visual=False):
-        self.internal_id = internal_id
-        self.car_id = car_id                      # 外部 ID（来自视觉或 0）
-        self.state = TrackState.Tentative
-        self.hits = 1
-        self.no_loss = 0
-        self.age = 0
-        self.position = position.copy()
-        self.predictor = EKFPredictor(dt=dt)
-        self.predictor.set_state(position[0], position[1])
-        self.has_ever_matched = from_visual       # 是否曾与检测框匹配过（即有 label）
-
-    def predict(self):
-        self.age += 1
-        pred_x, pred_y = self.predictor.predict()
-        return np.array([pred_x, pred_y, self.position[2]])
-
-    def update(self, position: np.ndarray, car_id: int, from_visual: bool):
-        """使用观测更新轨迹"""
-        self.position = position.copy()
-        self.predictor.set_state(position[0], position[1])
-        if from_visual:
-            # 视觉观测：更新 car_id（如果 car_id 为正且有效），并标记已匹配过
-            if car_id != 0:
-                self.car_id = car_id
-            self.has_ever_matched = True
-        else:
-            # 点云观测（未匹配簇）：不改变 car_id，也不改变 has_ever_matched 状态
-            pass
-        self.hits += 1
-        self.no_loss = 0
-        if self.state == TrackState.Tentative and self.hits >= 3:
-            self.state = TrackState.Confirmed
-
-    def mark_missed(self):
-        self.no_loss += 1
-        if self.no_loss > 5:
-            self.state = TrackState.Deleted
-
-    def get_position(self) -> np.ndarray:
-        return self.position
-
-    def get_predicted_position(self) -> np.ndarray:
-        pred_x, pred_y = self.predictor.get_position()
-        return np.array([pred_x, pred_y, self.position[2]])
-
-
-class MultiTargetTracker:
-    def __init__(self, max_distance=0.5, max_age=5, min_hits=3, dt=0.1):
-        self.tracks: Dict[int, Track] = {}   # internal_id -> Track
-        self.next_id = 1
-        self.max_distance = max_distance
-        self.max_age = max_age
-        self.min_hits = min_hits
-        self.dt = dt
-
-    def _get_new_id(self):
-        new_id = self.next_id
-        self.next_id += 1
-        return new_id
-
-    def predict(self):
-        for track in self.tracks.values():
-            track.predict()
-
-    def update(self, detections: List[Tuple[int, np.ndarray, bool]]) -> List[Tuple[int, np.ndarray]]:
-        """
-        detections: (car_id, position, from_visual)
-            - car_id: 0 表示点云观测（未匹配簇），正数表示视觉观测
-            - from_visual: True 表示该观测来自检测框（即有 label），False 表示来自未匹配簇
-        返回确认态轨迹的 (car_id, position)（仅返回 has_ever_matched == True 的轨迹）
-        """
-        self.predict()
-
-        if len(detections) == 0:
-            for track in self.tracks.values():
-                track.mark_missed()
-            self._remove_dead_tracks()
-            return []
-
-        # 构建代价矩阵（使用预测位置）
-        track_ids = list(self.tracks.keys())
-        n_tracks = len(track_ids)
-        n_dets = len(detections)
-        cost_matrix = np.zeros((n_tracks, n_dets))
-        for i, tid in enumerate(track_ids):
-            pred_pos = self.tracks[tid].get_predicted_position()
-            for j, (_, det_pos, _) in enumerate(detections):
-                cost_matrix[i, j] = np.linalg.norm(pred_pos - det_pos)
-
-        # 匈牙利匹配
-        row_ind, col_ind = linear_sum_assignment(cost_matrix)
-        matched_tracks = set()
-        matched_dets = set()
-        for r, c in zip(row_ind, col_ind):
-            if cost_matrix[r, c] < self.max_distance:
-                matched_tracks.add(r)
-                matched_dets.add(c)
-                tid = track_ids[r]
-                obs_car_id, obs_pos, from_visual = detections[c]
-                self.tracks[tid].update(obs_pos, obs_car_id, from_visual)
-
-        # 未匹配的轨迹标记丢失
-        for i in range(n_tracks):
-            if i not in matched_tracks:
-                tid = track_ids[i]
-                self.tracks[tid].mark_missed()
-
-        # 未匹配的观测创建新轨迹（仅当观测来自视觉时才能创建）
-        for j in range(n_dets):
-            if j not in matched_dets:
-                car_id, pos, from_visual = detections[j]
-                if from_visual:
-                    # 视觉观测可以创建新轨迹
-                    new_tid = self._get_new_id()
-                    self.tracks[new_tid] = Track(new_tid, car_id, pos, dt=self.dt, from_visual=True)
-                # 点云观测（from_visual=False）不能创建新轨迹，直接丢弃
-
-        self._remove_dead_tracks()
-
-        # 返回确认态轨迹（只返回 has_ever_matched == True 的轨迹）
-        result = []
-        for track in self.tracks.values():
-            if track.state == TrackState.Confirmed and track.has_ever_matched:
-                result.append((track.car_id, track.get_position()))
-        return result
-
-    def _remove_dead_tracks(self):
-        dead = [tid for tid, t in self.tracks.items() if t.state == TrackState.Deleted]
-        for tid in dead:
-            del self.tracks[tid]
-
+# ========== 移除旧的追踪器类（EKFPredictor, TrackState, Track, MultiTargetTracker）==========
+# 它们已被 tracker_enhanced.py 中的实现替代，此处不再保留。
 
 # ---------------------- 主节点 -----------------------------
 class Radar(Node):
@@ -242,108 +75,113 @@ class Radar(Node):
         )
 
         self.bridge = CvBridge()
-        # detector_config_path = "./configs/detector_config.yaml"
-        # binocular_camera_cfg_path = "./configs/bin_cam_config.yaml"
         main_cfg = YAML().load(open(MAIN_CONFIG_PATH, encoding='utf-8', mode='r'))
         converter_config_path = CONVERTER_CONFIG_PATH
+        detector_cfg = YAML().load(open(DETECTOR_CONFIG_PATH, encoding='utf-8', mode='r'))
         
         # 全局变量
         self.global_my_color = main_cfg['global']['my_color']
         is_debug = main_cfg['global']['is_debug']
         self.carList = CarList(main_cfg)
         self.carList_results = []
-        self.all_detections = [] # 创建一个空列表来存储所有检测的结果
-        self.last_all_detections = [] # 创建一个空列表来存储上一帧的检测结果
-        # 当前帧ID
+        self.all_detections = []
+        self.last_all_detections = []
         self.frame_id = 1
-        # 计数器，用于计算fps
         self.counter = 0
         
-        today = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()) # 今日日期，例如2024年5月6日则为20240506
-        self.converter = Converter(self.global_my_color,converter_config_path)  # 传入的是path
-        # 场地解算
-        # converter.camera_to_field_init(capture)
-        # self.converter_inted = False
+        today = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        self.converter = Converter(self.global_my_color, converter_config_path)
         
-        # 加载转换器配置文件
+        # 加载转换器配置文件（外参）
         with open(converter_config_path, 'r', encoding='utf-8') as file:
             data_loader = yaml.safe_load(file)
-            
-        # 读取激光雷达到相机外参
-        # 构建旋转和平移矩阵，4*3的矩阵，前三列为旋转矩阵，第四列为平移矩阵
         self.R = np.array(data_loader['calib']['extrinsic']['R']['data']).reshape(
             (data_loader['calib']['extrinsic']['R']['rows'], data_loader['calib']['extrinsic']['R']['cols']))
         self.T = np.array(data_loader['calib']['extrinsic']['T']['data']).reshape(
             (data_loader['calib']['extrinsic']['T']['rows'], data_loader['calib']['extrinsic']['T']['cols']))
-        # 构建外参矩阵，4*4的矩阵，激光雷达到相机的外参矩阵
         self.extrinsic_matrix = np.hstack((self.R, self.T))
         self.extrinsic_matrix = np.vstack((self.extrinsic_matrix, [0, 0, 0, 1]))
-        # 相机到激光雷达的变换矩阵（通过求逆得到）
         self.extrinsic_matrix_inv = np.linalg.inv(self.extrinsic_matrix)
         
-        
         self.start_time = time.time()
-        # fps计算
-        N = 10
         self.fps_queue = deque(maxlen=10)
         self.lidar_points = None
-        # 订阅Robots话题
+        
+        # 订阅和发布
         self.sub_detect = self.create_subscription(Robots, "detect_result", self.radar_callback, qos_profile)
         self.get_logger().info('Radar subscriber has been started at {}.'.format(today))
-        # 订阅背景减除后的点云话题
         self.sub_pcds = self.create_subscription(PointCloud2, "target_pointcloud", self.pcd_callback, qos__lidar_profile)
-        # 发布车辆位置信息
         self.pub_location = self.create_publisher(Locations, "location", qos_profile)
         self.last_frameid = -1
-        # 可视化去除地面后的点云
         self.pub_nognd = self.create_publisher(PointCloud2, "pcd_removed", qos__lidar_profile)
         
-        # 订阅实时icp传来的tf消息
-        self.tf_buffer = Buffer()  # 创建 TF 缓冲区
-        self.tf_listener = TransformListener(self.tf_buffer, self)  # 创建监听器
-        self.timer = self.create_timer(1.0, self.on_timer)  # 定时查询 TF
-        self.radar_to_field = np.ones((4, 4)) # 激光雷达到赛场的tf矩阵
-        self.radar_to_field_inv = np.ones((4, 4)) # 激光雷达到赛场的tf矩阵的逆（用于将点云转换回雷达坐标系）
+        # TF 监听
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.timer = self.create_timer(1.0, self.on_timer)
+        self.radar_to_field = np.ones((4, 4))
+        self.radar_to_field_inv = np.ones((4, 4))
 
-        # 新增：追踪器参数
+        # ========== 初始化新的固定槽位追踪器 ==========
+        # 读取卡尔曼滤波参数（从 detector_config.yaml 的 filter 段）
+        filter_cfg = detector_cfg.get('filter', {})
+        kf_process_noise = filter_cfg.get('process_noise', 0.005)
+        kf_measurement_noise = filter_cfg.get('measurement_noise', 0.15)
+        kf_jump_threshold = filter_cfg.get('jump_threshold', 1.0)
+        kf_max_velocity = filter_cfg.get('max_velocity', 5.0)
+        
+        # 读取类别标签列表
+        self.labels = detector_cfg['params']['labels']  # ["B1","B2",...,"R7"]
+        
+        # 根据己方颜色确定敌方 car_id 列表（固定槽位）
+        if self.global_my_color == "Red":
+            enemy_car_ids = [101, 102, 103, 104, 105, 106, 107]  # 蓝方
+        else:
+            enemy_car_ids = [1, 2, 3, 4, 5, 6, 7]                # 红方
+        
+        self.tracker = FixedSlotTracker(
+            enemy_car_ids=enemy_car_ids,
+            class_num=len(self.labels),
+            max_distance=0.5,
+            w_pos=0.7,
+            w_app=0.3,
+            process_noise=kf_process_noise,
+            measurement_noise=kf_measurement_noise,
+            jump_threshold=kf_jump_threshold,
+            max_velocity=kf_max_velocity
+        )
+        
+        # 保留旧的参数（用于簇匹配）
         self.MATCH_THRESHOLD = 0.8
         self.MIN_BOX_DIST_PX = 100
         self.MIN_CLUSTER_POINTS_FOR_SPLIT = 20
-        self.tracker = MultiTargetTracker(max_distance=0.5, max_age=5, min_hits=3, dt=0.1)
-    ######################################################
-    # 定时查询 TF
+
+    # ---------- TF 相关方法（保持不变）----------
     def on_timer(self):
         try:
             transform: TransformStamped = self.tf_buffer.lookup_transform(
                 target_frame='map',
                 source_frame='livox',
-                time=rclpy.time.Time()  # 获取最新可用变换
+                time=rclpy.time.Time()
             )
             translation = transform.transform.translation
             rotation = transform.transform.rotation
-            # self.log_transform(transform)
-            # 转换为 4x4 变换矩阵
             transform_matrix = self.tf_to_matrix(translation, rotation)
             self.radar_to_field = transform_matrix
             self.radar_to_field_inv = np.linalg.inv(self.radar_to_field)
-            # self.get_logger().info(f"获取 TF 成功: {transform}")
         except TransformException as ex:
             self.radar_to_field = np.ones((4, 4))
             self.get_logger().error(f"获取 TF 失败: {ex}")    
     
-    # 将 TF 转换为 4x4 齐次变换矩阵
     def tf_to_matrix(self, translation, rotation):
-        # 四元数转旋转矩阵
         q = np.array([rotation.x, rotation.y, rotation.z, rotation.w])
         R = self.quaternion_to_rotation_matrix(q)
-
-        # 构建 4x4 齐次变换矩阵
         transform_matrix = np.eye(4)
         transform_matrix[:3, :3] = R
         transform_matrix[:3, 3] = [translation.x, translation.y, translation.z]
         return transform_matrix
+    
     def quaternion_to_rotation_matrix(self, q):
-        # 四元数转旋转矩阵
         x, y, z, w = q
         return np.array([
             [1 - 2*(y**2 + z**2), 2*(x*y - z*w),     2*(x*z + y*w)],
@@ -351,30 +189,25 @@ class Radar(Node):
             [2*(x*z - y*w),     2*(y*z + x*w),     1 - 2*(x**2 + y**2)]
         ])
     
-    # 将相机坐标系下的点云转换到激光雷达坐标系
     def camera_to_lidar(self, pc):
-        pc = np.hstack((pc, np.ones((pc.shape[0], 1)))) # 齐次化
-        ret = np.dot(pc, self.extrinsic_matrix) # 矩阵变换
-        ret = ret[:, :3] # 去齐次化
+        pc = np.hstack((pc, np.ones((pc.shape[0], 1))))
+        ret = np.dot(pc, self.extrinsic_matrix)
+        ret = ret[:, :3]
         return ret
-    # 点云回调函数
+    
+    # ---------- 点云回调（保持不变）----------
     def pcd_callback(self, msg):
-        '''
-        子线程函数，对于/livox/lidar topic数据的处理 , data是传入的
-        '''
         points = np.array(
-                list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)),
-                dtype=[("x", np.float32), ("y", np.float32), ("z", np.float32)],
+            list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)),
+            dtype=[("x", np.float32), ("y", np.float32), ("z", np.float32)],
         )
         if points.size == 0:
             self.lidar_points = None
             return
-
         points = np.stack([points["x"], points["y"], points["z"]], axis=-1).astype(np.float64)
         self.lidar_points = np.ascontiguousarray(points)
-        # self.converter.lidar_to_field(points)
-   ########################################################3
-    # DBSCAN 聚类（在雷达坐标系下）
+    
+    # ---------- DBSCAN 聚类（保持不变）----------
     def cluster_points_dbscan(self, points: np.ndarray, eps: float = 0.25, min_samples: int = 3) -> List[np.ndarray]:
         if points.shape[0] == 0:
             return []
@@ -388,7 +221,6 @@ class Radar(Node):
             clusters.append(cluster_points)
         return clusters
 
-    # 新增方法：计算簇特征
     def compute_cluster_features(self, cluster_pts):
         if cluster_pts.shape[0] == 0:
             return None
@@ -411,7 +243,6 @@ class Radar(Node):
             'raw_points': cluster_pts
         }
 
-    # 新增方法：K-means 拆分簇
     def split_cluster_with_kmeans(self, cluster_pts, matched_boxes):
         K = len(matched_boxes)
         if K < 2 or cluster_pts.shape[0] < self.MIN_CLUSTER_POINTS_FOR_SPLIT:
@@ -430,8 +261,8 @@ class Radar(Node):
             feat['matched_box'] = matched_boxes[k]
             sub_features.append(feat)
         return sub_features
-    #############################################################
-    # 辅助发布方法（原始 CarList 发布逻辑）
+    
+    # ---------- 辅助发布（保持不变）----------
     def _publish_through_carlist(self, null_robot_locations):
         self.carList.update_car_info(self.carList_results)
         all_infos = self.carList.get_all_info()
@@ -455,21 +286,21 @@ class Radar(Node):
             loc.label = 'NULL'
             allLocation.locs.append(loc)
         self.pub_location.publish(allLocation)
-    ######################################################
-    # 雷达回调函数（增强版）
+    
+    # ---------- 核心雷达回调（已适配新追踪器）----------
     def radar_callback(self, msg):
         detect_results = msg.detect_results
         if self.lidar_points is None:
             return
 
-        # 1. 对雷达坐标系点云聚类
+        # 1. 点云聚类
         clusters = self.cluster_points_dbscan(self.lidar_points, eps=0.15, min_samples=9)
         if not clusters:
             # 无点云簇，直接更新追踪器（观测为空）
-            tracked = self.tracker.update([])
+            tracked_results = self.tracker.update([], time.time())
             self.carList_results.clear()
             null_robot_locations = []
-            for car_id, pos in tracked:
+            for car_id, pos in tracked_results:
                 if car_id > 0:
                     self.carList_results.append([car_id, car_id, [0,0,0,0], 1, [0,0,0], pos])
                 elif car_id == 0:
@@ -477,7 +308,7 @@ class Radar(Node):
             self._publish_through_carlist(null_robot_locations)
             return
 
-        # 2. 提取每个簇的特征（利用 Converter 完成坐标转换和投影）
+        # 2. 提取簇特征
         cluster_features = []
         cluster_raw_points = []
         for cluster_pts in clusters:
@@ -485,11 +316,10 @@ class Radar(Node):
             if feat is not None:
                 cluster_features.append(feat)
                 cluster_raw_points.append(cluster_pts)
-
         if not cluster_features:
             return
 
-        # 3. 匈牙利匹配（全局最优）
+        # 3. 匈牙利匹配（与检测框）
         n_clusters = len(cluster_features)
         n_boxes = len(detect_results)
         if n_boxes == 0:
@@ -498,11 +328,11 @@ class Radar(Node):
             for feat in cluster_features:
                 center_h = np.append(feat['center_lidar'], 1.0)
                 field_xyz = np.dot(self.radar_to_field, center_h)[:3]
-                observations.append((0, field_xyz, False))
-            tracked = self.tracker.update(observations)
+                observations.append((0, field_xyz, False, -1, 0.0))   # (car_id, pos, from_visual, class_label, conf)
+            tracked_results = self.tracker.update(observations, time.time())
             self.carList_results.clear()
             null_robot_locations = []
-            for car_id, pos in tracked:
+            for car_id, pos in tracked_results:
                 if car_id > 0:
                     self.carList_results.append([car_id, car_id, [0,0,0,0], 1, [0,0,0], pos])
                 elif car_id == 0:
@@ -510,53 +340,41 @@ class Radar(Node):
             self._publish_through_carlist(null_robot_locations)
             return
 
-        # 构建代价矩阵
+        # 构建代价矩阵（基于投影占比和像素距离）
         INF_COST = 1e9
         cost_matrix = np.full((n_clusters, n_boxes), INF_COST, dtype=np.float32)
-
-        #填充代价
         for i, feat in enumerate(cluster_features):
             for j, det in enumerate(detect_results):
-                xywh_box = det.xywh_box          # [cx, cy, w, h]
+                xywh_box = det.xywh_box
                 box_center = np.array([xywh_box[0], xywh_box[1]])
                 w, h = xywh_box[2], xywh_box[3]
-                # 框边界
                 x1 = xywh_box[0] - w/2
                 y1 = xywh_box[1] - h/2
                 x2 = xywh_box[0] + w/2
                 y2 = xywh_box[1] + h/2
-
                 pixels = feat['pixels']
                 inside = (pixels[:,0] >= x1) & (pixels[:,0] <= x2) & \
-                        (pixels[:,1] >= y1) & (pixels[:,1] <= y2)
+                         (pixels[:,1] >= y1) & (pixels[:,1] <= y2)
                 ratio = np.sum(inside) / pixels.shape[0] if pixels.shape[0] > 0 else 0
-
                 dist = np.linalg.norm(feat['center_pixel'] - box_center)
-                # 宽松过滤
                 if ratio > 0.75 and dist < 200:
                     diag = np.sqrt(w**2 + h**2)
-                    norm_dist = dist / diag  # 使用对角线归一化
-
-                    # 代价 = 占比惩罚 + 归一化距离
+                    norm_dist = dist / diag
                     cost = (1 - ratio) + norm_dist
                     cost_matrix[i, j] = cost
-                # 否则保持 INF_COST
 
-        # 执行匈牙利算法
         row_ind, col_ind = linear_sum_assignment(cost_matrix)
         matches = []
         for r, c in zip(row_ind, col_ind):
-            if cost_matrix[r, c] < INF_COST / 2:  # 有效匹配
+            if cost_matrix[r, c] < INF_COST / 2:
                 matches.append((r, c))
 
-        # 第一步：一对一匹配
         matched_cluster_to_box = {}
         matched_box_to_cluster = {}
         for cluster_idx, det_idx in matches:
             matched_cluster_to_box[cluster_idx] = det_idx
             matched_box_to_cluster[det_idx] = cluster_idx
 
-        # 第二步：未匹配框尝试分配给已有簇（一对多补充）
         extra_matches = {i: [] for i in matched_cluster_to_box.keys()}
         if n_boxes > 0:
             unmatched_boxes = [j for j in range(n_boxes) if j not in matched_box_to_cluster]
@@ -577,34 +395,41 @@ class Radar(Node):
                 if best_cluster is not None:
                     extra_matches[best_cluster].append(j)
 
-        # 合并匹配结果
         final_cluster_to_boxes = {}
         for i in matched_cluster_to_box.keys():
             boxes = [matched_cluster_to_box[i]] + extra_matches[i]
             final_cluster_to_boxes[i] = boxes
 
-        # 收集观测 (car_id, field_xyz, from_visual)
-        observations = []   # 每个元素为 (car_id, field_xyz, from_visual)
+        # 构建观测列表（包含类别和置信度）
+        observations = []   # (car_id, field_xyz, from_visual, class_label, confidence)
         all_matched_clusters = set(final_cluster_to_boxes.keys())
 
-        # 7.1 匹配成功的簇（单匹配或多匹配）-> from_visual=True
+        # 匹配成功的簇（视觉关联）
         for cluster_idx, box_indices in final_cluster_to_boxes.items():
             if len(box_indices) == 1:
                 det = detect_results[box_indices[0]]
                 label = det.label
                 if label == "NULL":
                     car_id = 0
+                    class_label = -1
+                    confidence = 0.0
                 else:
                     car_id = self.carList.get_car_id(label)
-                    # 颜色过滤：己方车辆不生成观测（但追踪器内部仍可能保留，最终发布时会过滤）
+                    # 颜色过滤：己方车辆不生成观测
                     if self.global_my_color == "Red" and car_id < 100 and car_id != 7:
                         continue
                     if self.global_my_color == "Blue" and car_id > 100 and car_id != 107:
                         continue
+                    # 获取类别索引
+                    try:
+                        class_label = self.labels.index(label)
+                    except ValueError:
+                        class_label = -1
+                    confidence = det.confidence   # 注意：DetectResult 中需要有 confidence 字段
                 feat = cluster_features[cluster_idx]
                 center_h = np.append(feat['center_lidar'], 1.0)
                 field_xyz = np.dot(self.radar_to_field, center_h)[:3]
-                observations.append((car_id, field_xyz, True))
+                observations.append((car_id, field_xyz, True, class_label, confidence))
             else:
                 # 多匹配：拆分簇
                 cluster_pts = cluster_raw_points[cluster_idx]
@@ -615,44 +440,50 @@ class Radar(Node):
                     label = det.label
                     if label == "NULL":
                         car_id = 0
+                        class_label = -1
+                        confidence = 0.0
                     else:
                         car_id = self.carList.get_car_id(label)
                         if self.global_my_color == "Red" and car_id < 100 and car_id != 7:
                             continue
                         if self.global_my_color == "Blue" and car_id > 100 and car_id != 107:
                             continue
+                        try:
+                            class_label = self.labels.index(label)
+                        except ValueError:
+                            class_label = -1
+                        confidence = det.confidence
                     center_h = np.append(sub_feat['center_lidar'], 1.0)
                     field_xyz = np.dot(self.radar_to_field, center_h)[:3]
-                    observations.append((car_id, field_xyz, True))
+                    observations.append((car_id, field_xyz, True, class_label, confidence))
 
-        # 7.2 未匹配的簇（完全没有匹配到任何框的簇）-> from_visual=False
+        # 未匹配的簇（点云观测）
         for i in range(n_clusters):
             if i not in all_matched_clusters:
                 feat = cluster_features[i]
                 center_h = np.append(feat['center_lidar'], 1.0)
                 field_xyz = np.dot(self.radar_to_field, center_h)[:3]
-                observations.append((0, field_xyz, False))
+                observations.append((0, field_xyz, False, -1, 0.0))
 
-        # 8. 更新追踪器
-        tracked_results = self.tracker.update(observations)
+        # 更新追踪器
+        current_time = time.time()
+        tracked_results = self.tracker.update(observations, current_time)
 
-        # 9. 转换为 carList_results 和 null_robot_locations
+        # 转换为 carList_results 和 null_robot_locations
         self.carList_results.clear()
         null_robot_locations = []
         for car_id, pos in tracked_results:
             if car_id > 0:
-                self.carList_results.append([
-                    car_id, car_id, [0,0,0,0], 1, [0,0,0], pos
-                ])
+                self.carList_results.append([car_id, car_id, [0,0,0,0], 1, [0,0,0], pos])
             elif car_id == 0:
                 null_robot_locations.append(pos)
 
-        # 10. 发布
+        # 发布
         self._publish_through_carlist(null_robot_locations)
 
     def __del__(self):
         pass
-    #######################################################
+
 def main(args=None):
     rclpy.init(args=args)
     radar = Radar()
