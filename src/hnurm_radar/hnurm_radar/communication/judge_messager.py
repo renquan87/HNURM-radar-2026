@@ -165,13 +165,9 @@ class JudgeMessager(Node):
                 x = max(0, min(FIELD_WIDTH, x))
                 y = max(0, min(FIELD_HEIGHT, y))
 
-                if location.label == 'Red':  # 此时检测到机器人都是红方，代表自己是蓝方
-                    # 蓝色方定位坐标转换到标准赛场坐标系，以红方兑换区左下角为(0,0)
-                    x = FIELD_WIDTH - x
-                    y = FIELD_HEIGHT - y
-                    robot_loc[location.id] = [x, y]
-                else:
-                    robot_loc[robot_trans[location.id]] = [x, y]
+                # 配准初始位姿已根据 my_color 正确设置，坐标直接就是裁判系统坐标，
+                # 无需根据 label 做坐标翻转。
+                robot_loc[robot_trans[location.id]] = [x, y]
 
             self.send_map_robot_location(robot_loc)
 

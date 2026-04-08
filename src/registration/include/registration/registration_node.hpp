@@ -151,6 +151,16 @@ class RelocaliztionNode : public rclcpp::Node{
     bool use_quatro_ = false;
     bool use_fixed_ = false;
 
+    // 初始位姿参数（从 launch 注入，用于引导 ICP 收敛方向）
+    double initial_pose_x_ = 0.0;
+    double initial_pose_y_ = 0.0;
+    double initial_pose_z_ = 0.0;
+    double initial_pose_yaw_ = 0.0;
+    bool use_config_initial_pose_ = false;  // 参数有效（不全为0）时为 true
+    bool prefer_config_initial_pose_ = true;  // 为 true 时，优先用配置初始位姿启动 ICP，不先跑 Quatro
+    double first_registration_max_translation_jump_ = 8.0;  // 首次 ICP 结果相对初值的最大允许平移跳变（米）
+    bool using_config_initial_guess_ = false;  // 当前 initial_guess_ 是否来自配置
+
     //quatro++ params
 
 

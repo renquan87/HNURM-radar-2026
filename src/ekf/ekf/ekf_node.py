@@ -100,7 +100,7 @@ class RobotInfo(object):
 
 
 # ── 诊断相关常量 ──
-NUM_SLOTS = 7                    # 7 个 EKF 滤波器 slot
+NUM_SLOTS = 14                   # 14 个 EKF 滤波器 slot（7 红方 + 7 蓝方）
 DETECTION_WINDOW_SEC = 2.0       # 检测频率计算的滑动窗口 (秒)
 DETECTION_WINDOW_MS = DETECTION_WINDOW_SEC * 1000.0
 
@@ -125,27 +125,34 @@ class EKFNode(Node):
         self.get_logger().info(
             f'📋 debug_coordinate_publish = {self.debug_coordinate_publish} '
             f'{"(调试模式: 全部坐标发布)" if self.debug_coordinate_publish else "(赛场模式: 仅标准ID)"}')
-        # 机器人ID映射到数组下标
-        # 地面机器人: 1-5/101-105 → slot 1-5
-        # 哨兵:     7/107       → slot 6
-        # 空中机器人: 6/106       → slot 7
+        # 机器人ID映射到数组下标（1-based）
+        # [测试] 红方和蓝方使用独立 slot，避免己方/敌方同时进入时 slot 冲突
+        # 红方 slot 1-7:  地面 1-5 → slot 1-5, 哨兵 7 → slot 6, 空中 6 → slot 7
+        # 蓝方 slot 8-14: 地面 101-105 → slot 8-12, 哨兵 107 → slot 13, 空中 106 → slot 14
         self.transform_to_th = {
             1: 1,
             2: 2,
             3: 3,
             4: 4,
             5: 5,
-            6: 7,       # 红方空中机器人 → 第7个滤波器
-            7: 6,
-            101: 1,
-            102: 2,
-            103: 3,
-            104: 4,
-            105: 5,
-            106: 7,     # 蓝方空中机器人 → 第7个滤波器
-            107: 6
+            6: 7,       # 红方空中机器人 → slot 7
+            7: 6,       # 红方哨兵 → slot 6
+            101: 8,
+            102: 9,
+            103: 10,
+            104: 11,
+            105: 12,
+            106: 14,    # 蓝方空中机器人 → slot 14
+            107: 13,    # 蓝方哨兵 → slot 13
         }
-        # 初始化7个机器人的EKF滤波器（6个地面 + 1个空中），修改噪声参数q，r减小突变对数据的影响
+        # slot 索引到 (robot_id, label) 的反向映射
+        self._slot_to_robot = {
+            0: (1, 'Red'), 1: (2, 'Red'), 2: (3, 'Red'), 3: (4, 'Red'), 4: (5, 'Red'),
+            5: (7, 'Red'), 6: (6, 'Red'),
+            7: (101, 'Blue'), 8: (102, 'Blue'), 9: (103, 'Blue'), 10: (104, 'Blue'), 11: (105, 'Blue'),
+            12: (107, 'Blue'), 13: (106, 'Blue'),
+        }
+        # 初始化14个机器人的EKF滤波器（红蓝各7个），修改噪声参数q，r减小突变对数据的影响
         self.kalfilt = [
             RobotEKF(4, 4, pval=0.001, qval=1e-4, rval=0.0005, interval=0.05) for _ in range(NUM_SLOTS)
         ]
@@ -279,25 +286,17 @@ class EKFNode(Node):
         self.get_logger().info(f"Estimated locations: {estimated_locations}")
         
         # 发布滤波后的位置信息
-        # 数组下标到 ID 的映射:
-        #   index 0-4 → 地面机器人 1-5 / 101-105
-        #   index 5   → 哨兵 7 / 107
-        #   index 6   → 空中机器人 6 / 106
-        th_to_id_red = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 7, 6: 6}
-        th_to_id_blue = {0: 101, 1: 102, 2: 103, 3: 104, 4: 105, 5: 107, 6: 106}
+        # 使用 _slot_to_robot 反向映射，直接从 slot 索引获取 (robot_id, label)
         locations = Locations()
         for i in range(len(estimated_locations)):
             location = Location()
             if estimated_locations[i][0] == 0 or estimated_locations[i][2] == 0:
                 continue
-            if self.eneny_color == 'Blue':
-                location.id = th_to_id_blue.get(i, i + 101)
-                location.label = 'Blue'
-            elif self.eneny_color == 'Red':
-                location.id = th_to_id_red.get(i, i + 1)
-                location.label = 'Red'
-            else:
+            if i not in self._slot_to_robot:
                 continue
+            robot_id, label = self._slot_to_robot[i]
+            location.id = robot_id
+            location.label = label
             location.x = float(estimated_locations[i][0])
             location.y = float(estimated_locations[i][2])
             location.z = float(self.locations_queue[1][i].z)
@@ -324,21 +323,15 @@ class EKFNode(Node):
 
     def _publish_diagnostics(self, estimated_locations, now_ms: float):
         """计算并发布所有 slot 的诊断指标。"""
-        # slot → 发布 ID 映射（与 timer_callback 中发布的 location.id 保持一致）
-        th_to_id_red = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 7, 6: 6}
-        th_to_id_blue = {0: 101, 1: 102, 2: 103, 3: 104, 4: 105, 5: 107, 6: 106}
-
         diag_msg = EkfDiagnosticsArray()
         diag_msg.stamp = self.get_clock().now().to_msg()
 
         for i in range(NUM_SLOTS):
             d = EkfDiagnostics()
             d.slot_id = i
-            # 使用与 /ekf_location_filtered 一致的 robot_id，确保 display_panel 能匹配
-            if self.eneny_color == 'Blue':
-                d.robot_id = th_to_id_blue.get(i, 0)
-            elif self.eneny_color == 'Red':
-                d.robot_id = th_to_id_red.get(i, 0)
+            # 使用 _slot_to_robot 反向映射获取 robot_id
+            if i in self._slot_to_robot:
+                d.robot_id = self._slot_to_robot[i][0]
             else:
                 d.robot_id = self._slot_robot_id[i]
 

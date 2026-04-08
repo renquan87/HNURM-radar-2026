@@ -39,7 +39,8 @@ TEST_RESOURCES_DIR = os.path.join(PROJECT_ROOT, "test_resources")
 # ======================== 配置文件 ========================
 MAIN_CONFIG_PATH = os.path.join(CONFIGS_DIR, "main_config.yaml")
 DETECTOR_CONFIG_PATH = os.path.join(CONFIGS_DIR, "detector_config.yaml")
-CONVERTER_CONFIG_PATH = os.path.join(CONFIGS_DIR, "converter_config.yaml")
+_CONVERTER_CONFIG_DEFAULT_PATH = os.path.join(CONFIGS_DIR, "converter_config.yaml")
+_CONVERTER_CONFIG_ROSBAG_PATH = os.path.join(CONFIGS_DIR, "converter_config_rosbag.yaml")
 PERSPECTIVE_CALIB_PATH = os.path.join(CONFIGS_DIR, "perspective_calib.json")
 BYTETRACK_CONFIG_PATH = os.path.join(CONFIGS_DIR, "bytetrack.yaml")
 HAP_CONFIG_PATH = os.path.join(CONFIGS_DIR, "HAP_config.json")
@@ -115,6 +116,18 @@ def resolve_path(path_str: str) -> str:
     return os.path.join(PROJECT_ROOT, path_str)
 
 
+def get_camera_mode() -> str:
+    """从 main_config.yaml 读取 camera.mode，默认返回 'hik'"""
+    try:
+        from ruamel.yaml import YAML
+        yaml = YAML()
+        with open(MAIN_CONFIG_PATH, encoding="utf-8") as f:
+            cfg = yaml.load(f)
+        return cfg.get("camera", {}).get("mode", "hik")
+    except Exception:
+        return "hik"
+
+
 def get_scene_name() -> str:
     """返回当前场景名称（如 'competition' 或 'lab'）"""
     try:
@@ -125,3 +138,18 @@ def get_scene_name() -> str:
         return cfg.get("global", {}).get("scene", "competition")
     except Exception:
         return "competition"
+
+
+# ======================== 动态路径（根据 camera.mode 选择） ========================
+def _select_converter_config() -> str:
+    """根据 camera.mode 自动选择对应的 converter_config。
+
+    rosbag 模式 → converter_config_rosbag.yaml（T-DT 相机参数）
+    其他模式   → converter_config.yaml（hnurm 自有参数）
+    """
+    if get_camera_mode() == "rosbag":
+        return _CONVERTER_CONFIG_ROSBAG_PATH
+    return _CONVERTER_CONFIG_DEFAULT_PATH
+
+
+CONVERTER_CONFIG_PATH = _select_converter_config()

@@ -22,6 +22,30 @@ RelocaliztionNode::RelocaliztionNode(const rclcpp::NodeOptions &options)
   use_fixed_ = this->declare_parameter("use_fixed",false);
   use_quatro_ = this->declare_parameter("use_quatro",false);
 
+  // 初始位姿参数（由 launch 文件从 main_config.yaml 注入）
+  initial_pose_x_   = this->declare_parameter("initial_pose_x", 0.0);
+  initial_pose_y_   = this->declare_parameter("initial_pose_y", 0.0);
+  initial_pose_z_   = this->declare_parameter("initial_pose_z", 0.0);
+  initial_pose_yaw_ = this->declare_parameter("initial_pose_yaw", 0.0);
+  // 判断初始位姿是否有效（不全为0）
+  use_config_initial_pose_ = !(initial_pose_x_ == 0.0 && initial_pose_y_ == 0.0
+                                && initial_pose_z_ == 0.0 && initial_pose_yaw_ == 0.0);
+  prefer_config_initial_pose_ = this->declare_parameter("prefer_config_initial_pose", true);
+  first_registration_max_translation_jump_ =
+    this->declare_parameter("first_registration_max_translation_jump", 8.0);
+  if (use_config_initial_pose_) {
+    RCLCPP_INFO(get_logger(),
+      "Config initial pose: x=%.2f, y=%.2f, z=%.2f, yaw=%.4f",
+      initial_pose_x_, initial_pose_y_, initial_pose_z_, initial_pose_yaw_);
+    RCLCPP_INFO(get_logger(),
+      "prefer_config_initial_pose=%s, first_registration_max_translation_jump=%.2f m",
+      prefer_config_initial_pose_ ? "true" : "false",
+      first_registration_max_translation_jump_);
+  } else {
+    RCLCPP_INFO(get_logger(),
+      "No config initial pose set (all zeros), waiting for /initialpose or Quatro");
+  }
+
   m_rotation_max_iter_ = this->declare_parameter("m_rotation_max_iter",100);
   m_num_max_corres_ = this->declare_parameter("m_num_max_corres",200);
   m_normal_radius_ = this->declare_parameter("m_normal_radius",0.02);
@@ -93,7 +117,7 @@ RelocaliztionNode::RelocaliztionNode(const rclcpp::NodeOptions &options)
 
   init_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
     "/initialpose",
-    rclcpp::SensorDataQoS(),
+    rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local(),
     std::bind(&RelocaliztionNode::initial_pose_callback,this,std::placeholders::_1)
   );
 
@@ -121,6 +145,7 @@ void RelocaliztionNode::initial_pose_callback(const geometry_msgs::msg::PoseWith
   // guesses_ = generate_initial_guesses(initial_guess_,0.5,M_PI/6);
 
   getInitialPose_ = true;
+  using_config_initial_guess_ = false;
   RCLCPP_INFO(get_logger(), "Received initial pose:");
   RCLCPP_INFO(get_logger(), "  Position: [%.2f, %.2f, %.2f]", 
     msg->pose.pose.position.x, 
@@ -163,8 +188,11 @@ void RelocaliztionNode::reset()
   doFirstRegistration_ = false;
   // Reset Quatro state so it re-runs after giving a new initial pose
   get_first_tf_from_quatro_ = false;
+  using_config_initial_guess_ = false;
   accumulation_counter_ = 0;
   source_cloud_->clear();
+  // 重置 transform，防止 timer_pub_tf_callback 发布过时/空的 TF
+  transform = geometry_msgs::msg::TransformStamped();
   RCLCPP_WARN(get_logger(), "Reset complete. Quatro will re-run on next initial pose.");
 }
 
@@ -232,11 +260,16 @@ void RelocaliztionNode::timer_pub_tf_callback(){
       // TF only — PCD map is published in the 2s timer_callback to avoid overloading RViz
       if(use_fixed_)
       {
-        if(get_first_tf_from_quatro_)
+        const bool can_run_with_config_guess =
+          use_config_initial_pose_ && prefer_config_initial_pose_ && using_config_initial_guess_;
+        if(get_first_tf_from_quatro_ || can_run_with_config_guess)
         {
           if(source_cloud_PointCovariance_)
           {
-            transform.header.frame_id = "map";  
+            if (transform.child_frame_id.empty()) {
+              return;  // 不发布空 child_frame_id 的 TF
+            }
+            transform.header.frame_id = "map";
             transform.header.stamp = this->now();
             tf_broadcaster_->sendTransform(transform);
           }
@@ -246,7 +279,10 @@ void RelocaliztionNode::timer_pub_tf_callback(){
       {
         if(source_cloud_PointCovariance_)
         {
-          transform.header.frame_id = "map";  
+          if (transform.child_frame_id.empty()) {
+            return;  // 不发布空 child_frame_id 的 TF
+          }
+          transform.header.frame_id = "map";
           transform.header.stamp = this->now();
           tf_broadcaster_->sendTransform(transform);
         }
@@ -265,9 +301,12 @@ void RelocaliztionNode::timer_callback(){
       if(use_fixed_)  //use tf guess form quatro , small_gicp do global relocalization
       {
         // RCLCPP_INFO(this->get_logger(),"test use fixed method");
-        if(get_first_tf_from_quatro_)
+        const bool can_run_with_config_guess =
+          use_config_initial_pose_ && prefer_config_initial_pose_ && using_config_initial_guess_;
+        if(get_first_tf_from_quatro_ || can_run_with_config_guess)
         {
           source_cloud_PointCovariance_ = voxelgrid_sampling_omp<pcl::PointCloud<pcl::PointXYZ>, pcl::PointCloud<pcl::PointCovariance>>(*source_cloud_, source_voxel_size_);
+          small_gicp::estimate_covariances_omp(*source_cloud_PointCovariance_, num_neighbors_, num_threads_);
           // RCLCPP_INFO(this->get_logger(),"publish pcd map");
           if(source_cloud_PointCovariance_)
           {
@@ -281,6 +320,7 @@ void RelocaliztionNode::timer_callback(){
       else if(!use_quatro_)
       {
         source_cloud_PointCovariance_ = voxelgrid_sampling_omp<pcl::PointCloud<pcl::PointXYZ>, pcl::PointCloud<pcl::PointCovariance>>(*source_cloud_, source_voxel_size_);
+        small_gicp::estimate_covariances_omp(*source_cloud_PointCovariance_, num_neighbors_, num_threads_);
         // RCLCPP_INFO(this->get_logger(),"publish pcd map");
         if(source_cloud_PointCovariance_)
         {
@@ -295,10 +335,31 @@ void RelocaliztionNode::timer_callback(){
 }
 void RelocaliztionNode::pointcloud_sub_callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
 {
+  // 首次收到点云时，如果配置了初始位姿且尚未获取初始位姿，则自动设置
+  if (!getInitialPose_ && use_config_initial_pose_) {
+    RCLCPP_INFO(get_logger(),
+      "Auto-setting initial pose from config: x=%.2f, y=%.2f, z=%.2f, yaw=%.4f",
+      initial_pose_x_, initial_pose_y_, initial_pose_z_, initial_pose_yaw_);
+    // 从 x, y, z, yaw 构建变换矩阵
+    Eigen::Matrix4d initial_transform = Eigen::Matrix4d::Identity();
+    double yaw = initial_pose_yaw_;
+    initial_transform(0, 0) = cos(yaw);
+    initial_transform(0, 1) = -sin(yaw);
+    initial_transform(1, 0) = sin(yaw);
+    initial_transform(1, 1) = cos(yaw);
+    initial_transform(0, 3) = initial_pose_x_;
+    initial_transform(1, 3) = initial_pose_y_;
+    initial_transform(2, 3) = initial_pose_z_;
+    initial_guess_ = Eigen::Isometry3d(initial_transform);
+    using_config_initial_guess_ = true;
+    getInitialPose_ = true;
+    // 不再需要等待 Quatro，直接标记为已获取初始位姿
+    // 注意：保留 /initialpose topic 订阅作为备用手动覆盖方式
+  }
   if (!getInitialPose_) {
     RCLCPP_WARN_THROTTLE(
-      get_logger(), 
-      *get_clock(), 
+      get_logger(),
+      *get_clock(),
       1000,  // 1 second
       "Waiting for initial pose..."
     );
@@ -306,23 +367,39 @@ void RelocaliztionNode::pointcloud_sub_callback(const sensor_msgs::msg::PointClo
   }
   if(use_fixed_)
   {
+    const bool need_quatro_bootstrap =
+      !get_first_tf_from_quatro_ &&
+      !(use_config_initial_pose_ && prefer_config_initial_pose_ && using_config_initial_guess_);
+
     // RCLCPP_INFO(this->get_logger(),"test use fixed method");
-    if(accumulation_counter_<=2&&!get_first_tf_from_quatro_)
+    if(accumulation_counter_<=2 && need_quatro_bootstrap)
     {
       pcl::fromROSMsg(*msg, *accumulate_cloud_);
-
+      // PCL += 运算符不复制 header，手动保存 frame_id
+      if (source_cloud_->header.frame_id.empty()) {
+          source_cloud_->header.frame_id = accumulate_cloud_->header.frame_id;
+      }
       *source_cloud_+=*accumulate_cloud_;
       accumulation_counter_++;
       if (accumulation_counter_>2)
       {
         source_cloud_downsampled_ = voxelgrid_sampling_omp(*source_cloud_,source_voxel_size_);
         bool if_valid_;
+        RCLCPP_INFO(get_logger(), "Starting Quatro align: source=%ld pts, target=%ld pts",
+            source_cloud_downsampled_->size(), global_map_downsampled_->size());
+        auto t0 = std::chrono::steady_clock::now();
         Eigen::Matrix4d output_tf_ = m_quatro_handler->align(*source_cloud_downsampled_, *global_map_downsampled_,if_valid_);
+        auto t1 = std::chrono::steady_clock::now();
+        RCLCPP_INFO(get_logger(), "Quatro align finished in %ld ms, valid=%d",
+            std::chrono::duration_cast<std::chrono::milliseconds>(t1-t0).count(), if_valid_);
         if (if_valid_&&!get_first_tf_from_quatro_)
         {
+          RCLCPP_INFO(get_logger(), "Quatro output T translation: [%.4f, %.4f, %.4f]",
+              output_tf_(0,3), output_tf_(1,3), output_tf_(2,3));
           publishTransform(output_tf_);
           getInitialPose_ = true;
           initial_guess_ = Eigen::Isometry3d(output_tf_);
+          using_config_initial_guess_ = false;
           RCLCPP_INFO(this->get_logger(),"publish tf");
           get_first_tf_from_quatro_ = true;
         }
@@ -331,9 +408,9 @@ void RelocaliztionNode::pointcloud_sub_callback(const sensor_msgs::msg::PointClo
           accumulation_counter_ = 0; //reset, accumulate again
         }
       }
-      
+      return;
     }
-    pcl::fromROSMsg(*msg, *source_cloud_); 
+    pcl::fromROSMsg(*msg, *source_cloud_);
 
     source_cloud_downsampled_ = voxelgrid_sampling_omp(*source_cloud_,source_voxel_size_);
 
@@ -374,8 +451,6 @@ void RelocaliztionNode::pointcloud_sub_callback(const sensor_msgs::msg::PointClo
 }
 
 void RelocaliztionNode::publishTransform(const Eigen::Matrix4d& transform_matrix) {
-  geometry_msgs::msg::TransformStamped transform;
-
   transform.header.stamp = this->now();
   transform.header.frame_id = "map";   
   transform.child_frame_id = source_cloud_->header.frame_id;    
@@ -420,8 +495,17 @@ void RelocaliztionNode::relocalization() {
   registration.rejector.max_dist_sq = max_dist_sq_;
   
   if(doFirstRegistration_){
+      RCLCPP_INFO(get_logger(), "ICP input: source=%ld pts, target=%ld pts",
+          source_cloud_PointCovariance_->size(), global_map_PointCovariance_->size());
+      RCLCPP_INFO(get_logger(), "ICP initial_guess (pre_result_) translation: [%.4f, %.4f, %.4f]",
+          pre_result_.translation().x(), pre_result_.translation().y(), pre_result_.translation().z());
       result = registration.align(*global_map_PointCovariance_, *source_cloud_PointCovariance_, *target_tree_, pre_result_);
-  } 
+      RCLCPP_INFO(get_logger(), "ICP result: converged=%d, error=%.4f, T_translation=[%.4f, %.4f, %.4f]",
+          result.converged, result.error,
+          result.T_target_source.translation().x(),
+          result.T_target_source.translation().y(),
+          result.T_target_source.translation().z());
+  }
   // else  
   // { 
   //   std::vector<RegistrationResult> results;
@@ -447,9 +531,33 @@ void RelocaliztionNode::relocalization() {
   //   // }
   //   // else pre_result_=best_result->transformation;
   // }
-  else  
-  { 
+  else
+  {
+    RCLCPP_INFO(get_logger(), "ICP input: source=%ld pts, target=%ld pts",
+        source_cloud_PointCovariance_->size(), global_map_PointCovariance_->size());
+    RCLCPP_INFO(get_logger(), "ICP initial_guess translation: [%.4f, %.4f, %.4f]",
+        initial_guess_.translation().x(), initial_guess_.translation().y(), initial_guess_.translation().z());
     result = registration.align(*global_map_PointCovariance_, *source_cloud_PointCovariance_, *target_tree_, initial_guess_);
+    RCLCPP_INFO(get_logger(), "ICP result: converged=%d, error=%.4f, T_translation=[%.4f, %.4f, %.4f]",
+        result.converged, result.error,
+        result.T_target_source.translation().x(),
+        result.T_target_source.translation().y(),
+        result.T_target_source.translation().z());
+    if (result.converged && using_config_initial_guess_) {
+      const Eigen::Vector3d jump =
+        result.T_target_source.translation() - initial_guess_.translation();
+      const double jump_norm = jump.norm();
+      RCLCPP_INFO(get_logger(),
+        "First ICP translation jump from config guess: %.4f m (limit=%.2f m)",
+        jump_norm, first_registration_max_translation_jump_);
+      if (jump_norm > first_registration_max_translation_jump_) {
+        RCLCPP_WARN(get_logger(),
+          "Rejecting first ICP result: jump %.4f m exceeds limit %.2f m. "
+          "Likely matched to symmetric/opposite-side region.",
+          jump_norm, first_registration_max_translation_jump_);
+        result.converged = false;
+      }
+    }
     if(!result.converged&&!doFirstRegistration_)
     {
       RCLCPP_INFO(get_logger(), "cannot do first registration,reset,result error:%f",result.error);

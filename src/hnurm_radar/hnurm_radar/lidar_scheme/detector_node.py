@@ -2,9 +2,13 @@
 detector_node.py — 激光雷达方案的视觉检测节点（方案二）
 
 功能：
-  调用海康工业相机获取图像，使用 YOLO 三阶段推理识别赛场机器人，
+  获取图像并使用 YOLO 三阶段推理识别赛场机器人，
   将检测结果（bbox + track_id + 分类标签）通过 ROS2 话题发布给
   下游的 radar_node 进行点云投影定位。
+
+  支持多种图像来源（由 main_config.yaml → camera.mode 控制）：
+    - "hik":    海康工业相机硬件直接获取（默认，比赛/实验室用）
+    - "rosbag": 从 ROS2 话题 /compressed_image 订阅压缩图像（rosbag 回放离线测试用）
 
 三阶段推理流程（委托给 detection.yolo_pipeline.YoloPipeline）：
   Stage 1 — track_infer():     全图目标检测 + ByteTrack 多目标追踪
@@ -14,7 +18,6 @@ detector_node.py — 激光雷达方案的视觉检测节点（方案二）
 与 camera_detector（方案一）的区别：
   - 本节点不做透视变换定位，仅输出 2D 检测框
   - 定位由下游 radar_node 结合点云完成（3D 投影 + DBSCAN 聚类）
-  - 直接依赖海康工业相机硬件（HKCam），无 test/video 模式
 
 发布话题：
   - detect_result (Robots)   — 所有检测到的机器人 bbox + 标签
@@ -22,6 +25,7 @@ detector_node.py — 激光雷达方案的视觉检测节点（方案二）
 
 配置文件：
   - configs/detector_config.yaml — 模型路径、置信度阈值、生命周期等
+  - configs/main_config.yaml     — camera.mode 控制图像来源
 """
 
 import rclpy
@@ -32,16 +36,16 @@ from ruamel.yaml import YAML
 
 from detect_result.msg import DetectResult
 from detect_result.msg import Robots
-from sensor_msgs.msg import Image
-from ..Camera.HKCam import *
+from sensor_msgs.msg import Image, CompressedImage
 from cv_bridge import CvBridge
 import cv2
 import time
 import threading
+import numpy as np
 import os
 from collections import deque
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, qos_profile_sensor_data
-from ..shared.paths import PROJECT_ROOT, DETECTOR_CONFIG_PATH, RECORD_DIR, resolve_path
+from ..shared.paths import PROJECT_ROOT, DETECTOR_CONFIG_PATH, MAIN_CONFIG_PATH, RECORD_DIR, resolve_path
 from ..detection.yolo_pipeline import YoloPipeline
 
 
@@ -54,6 +58,11 @@ class Detector(Node):
         self.bridge = CvBridge()
         # 加载配置文件
         self.cfg = YAML().load(open(DETECTOR_CONFIG_PATH, encoding='Utf-8', mode='r'))
+        # 加载主配置文件（用于读取 camera.mode）
+        main_cfg = YAML().load(open(MAIN_CONFIG_PATH, encoding='Utf-8', mode='r'))
+        self.camera_mode = main_cfg.get('camera', {}).get('mode', 'hik')
+        self.get_logger().info(f'图像来源模式: {self.camera_mode}')
+
         # 记录相关参数 flag and fps
         self.is_record = self.cfg['is_record']
         self.record_fps = self.cfg['record_fps']
@@ -81,19 +90,39 @@ class Detector(Node):
             history=HistoryPolicy.KEEP_LAST,
             depth=3
         )
-        # 打开相机
-        self.cam = HKCam(0)
+        
         self.frame = None
-        # 启动图像同步线程
-        self.frame_threading = threading.Thread(target=self.sync_frame)
-        self.frame_threading.start()
+        # 创建图像资源锁
+        self._frame_lock = threading.Lock()
+
+        # ── 根据模式初始化图像来源 ──
+        if self.camera_mode == 'rosbag':
+            # rosbag 模式：订阅压缩图像 topic
+            compressed_topic = main_cfg.get('camera', {}).get(
+                'compressed_image_topic', '/compressed_image')
+            self.get_logger().info(
+                f'Rosbag 模式: 订阅压缩图像 topic "{compressed_topic}"')
+            self.sub_compressed = self.create_subscription(
+                CompressedImage,
+                compressed_topic,
+                self._compressed_image_callback,
+                qos_profile
+            )
+            # rosbag 模式不录制（数据来自录像本身）
+            self.is_record = False
+        else:
+            # hik 模式（默认）：打开海康工业相机
+            from ..Camera.HKCam import HKCam
+            self.cam = HKCam(0)
+            # 启动图像同步线程
+            self.frame_threading = threading.Thread(target=self.sync_frame)
+            self.frame_threading.start()
+
         # 定期发送检测结果
         self.publisher_ = self.create_publisher(Robots, 'detect_result', qos_profile)
         # 用于发布检测图像结果节点
         self.pub_res = self.create_publisher(Image, 'detect_view', qos_profile)
         
-        # 创建图像资源锁
-        self._frame_lock = threading.Lock()
         # 创建线程用于推理
         self.threading = threading.Thread(target=self.infer_loop)
         self.threading.start()
@@ -103,15 +132,28 @@ class Detector(Node):
         self.image_queue = deque(maxlen=10)
         self.timestamp_queue = deque(maxlen=10)
         # 创建一个线程用于保存图像，录制文件存放在 record/ 文件夹下
-        os.makedirs(RECORD_DIR, exist_ok=True)
-        cur_date = time.strftime("%Y-%m-%d-%h-%s", time.localtime())
-        self.video_writer = cv2.VideoWriter(os.path.join(RECORD_DIR, cur_date + ".avi"), cv2.VideoWriter_fourcc(*'XVID'), 60, (3072, 2048))
-        # 打开文件用于保存时间戳
-        self.timestamp_file = open(os.path.join(RECORD_DIR, cur_date + ".txt"), "w")
-        self.save_thread = threading.Thread(target=self.save_image)
-        self.save_thread.start()
+        if self.is_record:
+            os.makedirs(RECORD_DIR, exist_ok=True)
+            cur_date = time.strftime("%Y-%m-%d-%h-%s", time.localtime())
+            self.video_writer = cv2.VideoWriter(os.path.join(RECORD_DIR, cur_date + ".avi"), cv2.VideoWriter_fourcc(*'XVID'), 60, (3072, 2048))
+            # 打开文件用于保存时间戳
+            self.timestamp_file = open(os.path.join(RECORD_DIR, cur_date + ".txt"), "w")
+            self.save_thread = threading.Thread(target=self.save_image)
+            self.save_thread.start()
 
-    # 保存图像函数    
+    # ── rosbag 模式：压缩图像回调 ──
+    def _compressed_image_callback(self, msg):
+        """从 /compressed_image topic 接收压缩图像并解码为 BGR numpy 数组"""
+        try:
+            np_arr = np.frombuffer(msg.data, np.uint8)
+            cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            if cv_image is not None:
+                with self._frame_lock:
+                    self.frame = cv_image
+        except Exception as e:
+            self.get_logger().error(f'解码压缩图像失败: {e}')
+
+    # 保存图像函数
     def save_image(self):
         while rclpy.ok():
             if self.is_record:
@@ -128,7 +170,7 @@ class Detector(Node):
             else:
                 time.sleep(0.1)
 
-    # 同步图像函数    
+    # 同步图像函数（仅 hik 模式使用）
     def sync_frame(self):
         while rclpy.ok():
             cam_frame = self.cam.getFrame()
@@ -138,7 +180,7 @@ class Detector(Node):
             with self._frame_lock:
                 self.frame = cam_frame.copy()
 
-    # 获取图像函数    
+    # 获取图像函数
     def getFrame(self):
         with self._frame_lock:
             if self.frame is None:

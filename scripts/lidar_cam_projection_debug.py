@@ -51,8 +51,10 @@ def _build_parser():
     p.add_argument("--det-topic", default="/detect_result", help="检测框话题")
 
     p.add_argument("--use-detect-box", action="store_true", help="启用检测框辅助统计")
-    p.add_argument("--render-mode", default="auto", choices=["auto", "full", "box-only"],
-                   help="可视化模式: auto|full|box-only")
+    p.add_argument("--render-mode", default="auto", choices=["auto", "full", "box-only", "overlay3d"],
+                   help="可视化模式: auto|full|box-only|overlay3d")
+    p.add_argument("--view-mode", default="both", choices=["overlay", "fusion", "both"],
+                   help="显示模式: overlay=原图叠加, fusion=点云视角融合, both=两个窗口都显示")
     p.add_argument("--box-margin", type=int, default=25, help="框过滤扩张像素")
 
     p.add_argument("--min-depth", type=float, default=0.8, help="相机坐标最小深度(m)")
@@ -71,6 +73,12 @@ def _build_parser():
 
     p.add_argument("--silhouette-dilate", type=int, default=3, help="轮廓膨胀核")
     p.add_argument("--point-radius", type=int, default=1, help="投影点半径")
+    p.add_argument("--fusion-image-alpha", type=float, default=0.35,
+                   help="fusion 模式中相机图像透明度(0~1)，越大图像越明显")
+    p.add_argument("--overlay3d-alpha", type=float, default=0.5,
+                   help="overlay3d 模式中相机图像混合比例(0~1)，按 +/- 可调")
+    p.add_argument("--overlay3d-max-width", type=int, default=1920,
+                   help="overlay3d 模式显示窗口最大宽度，超过则降采样")
 
     p.add_argument("--sync-tol", type=float, default=0.2, help="图点最大时间差(s)")
     p.add_argument("--log-interval", type=float, default=1.0, help="日志间隔(s)")
@@ -124,6 +132,9 @@ class LidarCamProjectionDebugger(Node):
 
         self.frame_idx = 0
         self.last_log_t = time.time()
+
+        # overlay3d 模式的动态 alpha（可按键调节）
+        self._overlay3d_alpha = float(np.clip(args.overlay3d_alpha, 0.0, 1.0))
 
         os.makedirs(args.save_dir, exist_ok=True)
 
@@ -421,6 +432,84 @@ class LidarCamProjectionDebugger(Node):
 
         return out
 
+    def _draw_cloud_canvas(self, shape_hw, uv_all, uv_focus):
+        """构建相机视角点云底图：全量点灰色，关注点(框内/过滤后)白色。"""
+        h, w = shape_hw
+        canvas = np.zeros((h, w, 3), dtype=np.uint8)
+
+        if len(uv_all) > 0:
+            uv_all_i = np.round(uv_all).astype(np.int32)
+            uv_all_i[:, 0] = np.clip(uv_all_i[:, 0], 0, w - 1)
+            uv_all_i[:, 1] = np.clip(uv_all_i[:, 1], 0, h - 1)
+            canvas[uv_all_i[:, 1], uv_all_i[:, 0]] = (80, 80, 80)
+
+        if len(uv_focus) > 0:
+            uv_focus_i = np.round(uv_focus).astype(np.int32)
+            uv_focus_i[:, 0] = np.clip(uv_focus_i[:, 0], 0, w - 1)
+            uv_focus_i[:, 1] = np.clip(uv_focus_i[:, 1], 0, h - 1)
+            canvas[uv_focus_i[:, 1], uv_focus_i[:, 0]] = (255, 255, 255)
+
+        return canvas
+
+    def _render_overlay3d(self, img_bgr):
+        """overlay3d 模式：点云白点底图 + 半透明相机图像叠加，用于外参验证。"""
+        h, w = img_bgr.shape[:2]
+
+        # --- 投影全量点云 ---
+        uv, depth, pstats = self._project_lidar_to_img(self.latest_points, w, h)
+
+        # --- 构建点云底图（黑底白点）---
+        cloud_layer = np.zeros((h, w, 3), dtype=np.uint8)
+        if len(uv) > 0:
+            uv_i = np.round(uv).astype(np.int32)
+            uv_i[:, 0] = np.clip(uv_i[:, 0], 0, w - 1)
+            uv_i[:, 1] = np.clip(uv_i[:, 1], 0, h - 1)
+            # 白色小点（使用数组赋值，快速）
+            cloud_layer[uv_i[:, 1], uv_i[:, 0]] = (255, 255, 255)
+
+        # --- alpha 混合：cloud_layer * (1-alpha) + img_bgr * alpha ---
+        alpha = self._overlay3d_alpha
+        blended = cv2.addWeighted(cloud_layer, 1.0 - alpha, img_bgr, alpha, 0.0)
+
+        # --- 在左上角标注信息 ---
+        info = (
+            f"overlay3d  alpha={alpha:.2f} (+/- to adjust, q to quit)  "
+            f"pts_in_img={pstats['n_in_img']}/{pstats['n_front']}/{pstats['n_total']}"
+        )
+        cv2.putText(blended, info, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                    (0, 255, 255), 1, cv2.LINE_AA)
+
+        # --- 大图降采样显示 ---
+        max_w = self.args.overlay3d_max_width
+        if w > max_w:
+            scale = max_w / float(w)
+            disp = cv2.resize(blended, (max_w, int(h * scale)), interpolation=cv2.INTER_AREA)
+        else:
+            disp = blended
+
+        return disp, blended, pstats
+
+    def _make_fusion_view(self, img_bgr, uv_all, uv_focus):
+        """相机视角融合图：点云画布 + 半透明相机图 + 检测框诊断。"""
+        h, w = img_bgr.shape[:2]
+        cloud_canvas = self._draw_cloud_canvas((h, w), uv_all, uv_focus)
+        alpha = float(np.clip(self.args.fusion_image_alpha, 0.0, 1.0))
+        fusion = cv2.addWeighted(cloud_canvas, 1.0, img_bgr, alpha, 0.0)
+
+        # 在 fusion 图上继续画检测框和统计文字，便于对齐排查
+        self._box_hit_stats_and_draw(fusion, uv_focus, w, h)
+        cv2.putText(
+            fusion,
+            f"fusion(alpha={alpha:.2f}) gray=all projected, white=focus(box-filtered)",
+            (10, 24),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (0, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+        return fusion
+
     def _img_cb(self, msg: Image):
         if self.latest_points is None:
             return
@@ -429,6 +518,11 @@ class LidarCamProjectionDebugger(Node):
             img = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
         except Exception as e:
             self.get_logger().error(f"图像转换失败: {e}")
+            return
+
+        # ---- overlay3d 专用分支 ----
+        if self.args.render_mode == "overlay3d":
+            self._img_cb_overlay3d(img)
             return
 
         h, w = img.shape[:2]
@@ -449,12 +543,14 @@ class LidarCamProjectionDebugger(Node):
 
         dt = abs(img_t - pc_t)
 
-        uv, depth, pstats = self._project_lidar_to_img(self.latest_points, w, h)
+        uv_all, depth_all, pstats = self._project_lidar_to_img(self.latest_points, w, h)
 
         mode = self.args.render_mode
         if mode == "auto":
             mode = "box-only" if (self.use_detect_box and len(self.latest_boxes) > 0) else "full"
 
+        uv = uv_all
+        depth = depth_all
         if mode == "box-only" and len(self.latest_boxes) > 0:
             uv, depth = self._filter_uv_by_boxes(uv, depth, w, h)
 
@@ -463,6 +559,7 @@ class LidarCamProjectionDebugger(Node):
 
         out = self._draw(img, uv, depth)
         bstats = self._box_hit_stats_and_draw(out, uv, w, h)
+        fusion = self._make_fusion_view(img, uv_all, uv)
 
         warn = "" if dt <= self.args.sync_tol else f" [WARN sync dt={dt:.3f}s src={dt_src}]"
         line1 = (
@@ -473,20 +570,24 @@ class LidarCamProjectionDebugger(Node):
         cv2.putText(out, line1, (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 1, cv2.LINE_AA)
         cv2.putText(out, line2, (10, 46), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 0), 1, cv2.LINE_AA)
 
+        publish_img = fusion if self.args.view_mode == "fusion" else out
         try:
-            self.pub_dbg.publish(self.bridge.cv2_to_imgmsg(out, encoding="bgr8"))
+            self.pub_dbg.publish(self.bridge.cv2_to_imgmsg(publish_img, encoding="bgr8"))
         except Exception as e:
             self.get_logger().error(f"调试图发布失败: {e}")
 
         if not self.args.no_window:
-            cv2.imshow("lidar_cam_projection_debug", out)
+            if self.args.view_mode in ("overlay", "both"):
+                cv2.imshow("lidar_cam_projection_debug", out)
+            if self.args.view_mode in ("fusion", "both"):
+                cv2.imshow("lidar_cam_projection_fusion", fusion)
             cv2.waitKey(1)
 
         self.frame_idx += 1
         if self.args.save_every > 0 and (self.frame_idx % self.args.save_every == 0):
             ts = time.strftime("%Y%m%d_%H%M%S", time.localtime())
             save_path = os.path.join(self.args.save_dir, f"proj_{ts}_{self.frame_idx:06d}.jpg")
-            cv2.imwrite(save_path, out)
+            cv2.imwrite(save_path, publish_img)
 
         now = time.time()
         if (now - self.last_log_t) >= self.args.log_interval:
@@ -501,6 +602,51 @@ class LidarCamProjectionDebugger(Node):
             if bstats.get("diag_lines"):
                 log_msg += " | " + " ; ".join(bstats["diag_lines"][:2])
             self.get_logger().info(log_msg)
+            self.last_log_t = now
+
+    def _img_cb_overlay3d(self, img_bgr):
+        """overlay3d 模式的图像回调：点云白点 + 半透明相机图叠加，按键交互。"""
+        disp, blended, pstats = self._render_overlay3d(img_bgr)
+
+        # 发布完整分辨率的混合图
+        try:
+            self.pub_dbg.publish(self.bridge.cv2_to_imgmsg(blended, encoding="bgr8"))
+        except Exception as e:
+            self.get_logger().error(f"调试图发布失败: {e}")
+
+        # 显示窗口
+        win_title = f"overlay3d (alpha={self._overlay3d_alpha:.2f})"
+        if not self.args.no_window:
+            cv2.imshow(win_title, disp)
+            key = cv2.waitKey(1) & 0xFF
+            # 按键交互
+            if key == ord("q"):
+                self.get_logger().info("overlay3d: 用户按 q 退出")
+                raise KeyboardInterrupt
+            elif key in (ord("+"), ord("=")):
+                self._overlay3d_alpha = min(1.0, self._overlay3d_alpha + 0.05)
+                self.get_logger().info(f"overlay3d: alpha -> {self._overlay3d_alpha:.2f}")
+                # 更新窗口标题（通过关闭旧窗口、下帧自动重建）
+                cv2.destroyAllWindows()
+            elif key in (ord("-"), ord("_")):
+                self._overlay3d_alpha = max(0.0, self._overlay3d_alpha - 0.05)
+                self.get_logger().info(f"overlay3d: alpha -> {self._overlay3d_alpha:.2f}")
+                cv2.destroyAllWindows()
+
+        # 保存
+        self.frame_idx += 1
+        if self.args.save_every > 0 and (self.frame_idx % self.args.save_every == 0):
+            ts = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+            save_path = os.path.join(self.args.save_dir, f"overlay3d_{ts}_{self.frame_idx:06d}.jpg")
+            cv2.imwrite(save_path, blended)
+
+        # 日志
+        now = time.time()
+        if (now - self.last_log_t) >= self.args.log_interval:
+            self.get_logger().info(
+                f"overlay3d: alpha={self._overlay3d_alpha:.2f}, "
+                f"pts_in_img={pstats['n_in_img']}/{pstats['n_front']}/{pstats['n_total']}"
+            )
             self.last_log_t = now
 
 

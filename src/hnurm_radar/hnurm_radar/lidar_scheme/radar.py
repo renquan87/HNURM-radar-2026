@@ -86,6 +86,22 @@ class Radar(Node):
         main_cfg = YAML().load(open(MAIN_CONFIG_PATH, encoding='Utf-8', mode='r'))
         converter_config_path = CONVERTER_CONFIG_PATH
         
+        # 判断是否为 rosbag 模式
+        self._camera_mode = main_cfg.get('camera', {}).get('mode', 'hik')
+        camera_cfg = main_cfg.get('camera', {})
+        if self._camera_mode == 'rosbag':
+            # rosbag 模式：TF frame 名称从配置读取（T-DT 使用 livox_frame/map）
+            self._tf_source_frame = camera_cfg.get('tf_source_frame', 'livox_frame')
+            self._tf_target_frame = camera_cfg.get('tf_target_frame', 'map')
+            self.get_logger().info(
+                f'[Rosbag 模式] TF: {self._tf_source_frame} → {self._tf_target_frame}, '
+                f'converter_config: {converter_config_path}'
+            )
+        else:
+            # 正常模式：使用 hnurm 默认 frame 名称
+            self._tf_source_frame = 'livox'
+            self._tf_target_frame = 'map'
+        
         # 全局变量
         self.global_my_color = main_cfg['global']['my_color']
         is_debug = main_cfg['global']['is_debug']
@@ -148,8 +164,8 @@ class Radar(Node):
     def on_timer(self):
         try:
             transform: TransformStamped = self.tf_buffer.lookup_transform(
-                target_frame='map',
-                source_frame='livox',
+                target_frame=self._tf_target_frame,
+                source_frame=self._tf_source_frame,
                 time=rclpy.time.Time()  # 获取最新可用变换
             )
             translation = transform.transform.translation
@@ -293,13 +309,11 @@ class Radar(Node):
             # 获取检测框信息
             xyxy_box, xywh_box ,  track_id , label = sg_result.xyxy_box, sg_result.xywh_box, sg_result.track_id, sg_result.label
             # self.get_logger().info('I heard: "%s"' % xyxy_box)
-            # 过滤己方车辆（NULL 标签不过滤，允许继续处理）
+            # [测试] 己方车辆不再过滤，与敌方走相同的检测→CarList→EKF 流程，
+            # 以便 display_panel 小地图同时显示己方和敌方。
+            # ⚠️ 注意：这也会导致 judge_messager 向裁判系统发送己方坐标，
+            # 正式比赛前需恢复过滤或在 judge_messager 中屏蔽己方。
             is_null = (label == "NULL")
-            if not is_null:
-                if self.global_my_color == "Red" and self.carList.get_car_id(label) < 100 and self.carList.get_car_id(label) != 7:
-                    continue
-                if self.global_my_color == "Blue" and self.carList.get_car_id(label) > 100 and self.carList.get_car_id(label) != 107:
-                    continue
             
             # 获取新xyxy_box , 原来是左上角和右下角，现在想要中心点保持不变，宽高设为原来的一半，再计算一个新的xyxy_box,可封装
             div_times = 1.01
@@ -375,6 +389,15 @@ class Radar(Node):
                 if track_id == -1:
                     continue
                 my_car_infos.append(all_info)
+                # [测试] 己方机器人也发布 Location，与敌方走相同流程，
+                # 以便 display_panel 小地图显示。正式比赛前需恢复过滤。
+                loc = Location()
+                loc.x = field_xyz[0]
+                loc.y = field_xyz[1]
+                loc.z = field_xyz[2]
+                loc.id = car_id
+                loc.label = color
+                allLocation.locs.append(loc)
             else:
                 enemy_car_infos.append(all_info)
                 # print(car_id,field_xyz,color)

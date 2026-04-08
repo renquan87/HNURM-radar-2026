@@ -4,7 +4,7 @@ lidar_node.py — 激光雷达点云接收与预处理节点（方案二）
 功能：
   订阅 Livox HAP 激光雷达驱动发布的 /livox/lidar 话题（PointCloud2），
   对原始点云进行距离滤波（近距离 + 远距离剔除），将多帧点云累积到
-  PcdQueue 队列中，并以 ~100Hz 频率重新发布合并后的原始点云到 /lidar_pcds，
+  PcdQueue 队列中，并以 ~10Hz 频率重新发布合并后的原始点云到 /lidar_pcds，
   供 registration 节点进行点云配准；同时基于背景地图执行背景减除，并将
   前景点云发布到 /target_pointcloud，供 radar 节点使用。
 
@@ -107,6 +107,15 @@ class LidarListener(Node):
         self.max_distance = lidar_cfg["max_distance"]
         self.lidar_topic_name = lidar_cfg["lidar_topic_name"]
 
+        # rosbag 模式下使用 rosbag 中点云的 frame_id（livox_frame），
+        # 以便 registration 节点发布正确的 TF child_frame_id
+        camera_cfg = cfg.get("camera", {})
+        camera_mode = camera_cfg.get("mode", "hik")
+        if camera_mode == "rosbag":
+            self._cloud_frame_id = camera_cfg.get("tf_source_frame", "livox_frame")
+        else:
+            self._cloud_frame_id = "livox"
+
         default_background_path = lidar_cfg.get(
             "background_map_path",
             os.path.join("data", "pointclouds", "background", "background.pcd")
@@ -143,7 +152,7 @@ class LidarListener(Node):
     def _build_cloud_msg(self, points):
         header = Header()
         header.stamp = self.get_clock().now().to_msg()
-        header.frame_id = "livox"
+        header.frame_id = self._cloud_frame_id
         fields = [
             PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
             PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
@@ -167,7 +176,7 @@ class LidarListener(Node):
             cur_time = time.time()
             _delta_time = cur_time - last_time
             last_time = cur_time
-            time.sleep(0.01)
+            time.sleep(0.1)
 
             points = self.get_all_pc()
             if len(points) > 0:
