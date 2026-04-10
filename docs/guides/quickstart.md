@@ -13,6 +13,7 @@
 - [离线视频调试](#离线视频调试)
 - [常见问题](#常见问题)
 - [辅助工具脚本](#辅助工具脚本)
+- [交互式外参调整](#交互式外参调整)
 
 ---
 
@@ -304,6 +305,9 @@ ros2 bag play <bag_directory>
 | `scripts/air_save_debug_pcd.py` | 保存空中检测 PCD 快照 | `python3 scripts/air_save_debug_pcd.py` |
 | `scripts/air_visualize_clusters.py` | 可视化空中目标聚类 | `python3 scripts/air_visualize_clusters.py` |
 | `scripts/validate_air_tracking_sequence.py` | 空中跟踪鲁棒性验证 | `python3 scripts/validate_air_tracking_sequence.py` |
+| `scripts/lidar_cam_projection_debug.py` | 雷达-相机外参调试（含交互式调整） | 见下方 [交互式外参调整](#交互式外参调整) |
+| `scripts/derive_lidar_camera_extrinsic_from_homography.py` | 从 Homography 反推外参初值 | `python3 scripts/derive_lidar_camera_extrinsic_from_homography.py` |
+| `scripts/record_initial_pose.py` | 记录 ICP 配准初始位姿 | `python3 scripts/record_initial_pose.py` |
 
 ### 标定工具（ROS 节点）
 
@@ -314,3 +318,111 @@ ros2 run hnurm_radar perspective_calibrator
 # 制作掩膜
 ros2 run hnurm_radar make_mask
 ```
+
+---
+
+## 交互式外参调整
+
+当雷达-相机外参（`converter_config.yaml` 或 `converter_config_rosbag.yaml` 中的 R/T）不正确时，可以使用 `lidar_cam_projection_debug.py` 的 **overlay3d** 模式进行实时交互式调整。
+
+### 前置条件
+
+- rosbag 正在播放（或实时运行雷达+相机）
+- registration 节点已完成 ICP 配准（如果使用动态外参模式）
+
+### 启动
+
+```bash
+# 基本用法（使用静态外参）
+python3 scripts/lidar_cam_projection_debug.py \
+  --config configs/converter_config.yaml \
+  --render-mode overlay3d
+
+# rosbag 模式（使用动态外参 = solvePnP × TF）
+python3 scripts/lidar_cam_projection_debug.py \
+  --config configs/converter_config_rosbag.yaml \
+  --render-mode overlay3d \
+  --dynamic-extrinsic
+
+# 推荐：累积 50 帧静态点云后冻结，使用稳定点云调整
+python3 scripts/lidar_cam_projection_debug.py \
+  --config configs/converter_config_rosbag.yaml \
+  --render-mode overlay3d \
+  --dynamic-extrinsic \
+  --accumulate-frames 50
+
+# 从零标定外参（忽略 YAML 外参，以雷达视角起点开始手动调整）
+python3 scripts/lidar_cam_projection_debug.py \
+  --config configs/converter_config_rosbag.yaml \
+  --render-mode overlay3d \
+  --identity-init \
+  --accumulate-frames 50
+```
+
+> **`--identity-init` 说明**：忽略 YAML 配置中的 R/T 外参，改用标准坐标轴转换矩阵
+> （Livox X=前→相机Z，Livox Y=左→相机-X，Livox Z=上→相机-Y）+ 零平移作为初始值。
+> 相当于"站在雷达位置看"的视角起点，适合从零开始手动标定外参。
+
+### 交互方式
+
+启动后会弹出两个窗口：
+- **overlay3d**：实时显示点云（深度着色）+ 相机图像叠加效果。点云颜色按深度渐变：**红色=近处，蓝色=远处**（JET colormap）
+- **Extrinsic Adjustment**：包含 7 个滑块（tx/ty/tz/roll/pitch/yaw/alpha），作为辅助微调
+
+#### 🖱️ 鼠标操作（主要交互方式，类似 Foxglove）
+
+直接在 **overlay3d** 窗口上操作，无需切换窗口：
+
+| 操作 | 功能 | 说明 |
+|------|------|------|
+| **左键拖拽** | 旋转（yaw / pitch） | 水平拖 = 左右旋转，垂直拖 = 上下旋转 |
+| **右键拖拽** | 平移（tx / ty） | 平移点云位置 |
+| **滚轮** | 缩放（tz） | 前后移动点云 |
+| **Ctrl + 左键拖拽** | Roll 旋转 | 旋转画面倾斜角 |
+| **中键拖拽** | 平移（同右键） | 备选平移方式 |
+
+#### Trackbar 滑块（辅助微调）
+
+| 滑块 | 范围 | 精度 | 说明 |
+|------|------|------|------|
+| tx / ty / tz | ±20.0m | 0.1m | 平移调整 |
+| roll / pitch / yaw | ±90.0° | 0.1° | 旋转调整 |
+| alpha | 0~100% | 1% | 图像透明度 |
+
+#### 键盘快捷键（辅助）
+
+| 按键 | 功能 |
+|------|------|
+| `A`/`D`, `W`/`S`, `R`/`F` | 平移 tx/ty/tz（步进式） |
+| `J`/`L`, `I`/`K`, `U`/`O` | 旋转 yaw/pitch/roll（步进式） |
+| `[` / `]` | 切换步长（COARSE 0.5m/2° → MEDIUM 0.1m/0.5° → FINE 0.02m/0.1°） |
+| `+` / `-` | 调整图像透明度 |
+| `0` | 重置所有增量为零 |
+| `P` | 打印当前 R/T 到终端 |
+| `Enter` | **保存**到 YAML 配置文件 |
+| `Q` | 退出 |
+
+### 点云累积模式
+
+添加 `--accumulate-frames N` 参数后，脚本会累积前 N 帧点云数据，合并去重后冻结。冻结后的点云和图像都不再更新，可以稳定地调整外参。
+
+```bash
+# 累积 30 帧（约 3 秒 @10Hz）
+--accumulate-frames 30
+
+# 累积 100 帧（更完整的点云覆盖）
+--accumulate-frames 100
+```
+
+HUD 中会显示累积状态：`[accum 15/50]`（累积中）或 `[FROZEN 50f]`（已冻结）。
+
+### 使用流程
+
+1. 启动后等待点云累积完成（如果使用了 `--accumulate-frames`）
+2. 在 overlay3d 窗口用**鼠标左键拖拽**旋转点云，使方向大致对齐
+3. 用**右键拖拽**平移点云位置，用**滚轮**调整深度
+4. 用 **Ctrl+左键** 微调 roll 角度
+5. 对齐后按 `P` 确认当前外参数值
+6. 满意后按 **Enter** 保存到 YAML 文件
+
+> **提示**：HUD 区域会实时显示当前增量。增量不为零时 HUD 文字变为绿色。点云深度着色帮助你区分远近物体。

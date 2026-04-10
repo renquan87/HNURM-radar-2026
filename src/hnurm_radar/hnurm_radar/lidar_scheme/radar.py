@@ -65,6 +65,12 @@ from tf2_ros.transform_listener import TransformListener
 from geometry_msgs.msg import TransformStamped
 import yaml
 from std_msgs.msg import Header
+
+try:
+    import cupy as cp
+    _HAS_CUPY = True
+except ImportError:
+    _HAS_CUPY = False
 class Radar(Node):
 
     def __init__(self):
@@ -89,6 +95,7 @@ class Radar(Node):
         # 判断是否为 rosbag 模式
         self._camera_mode = main_cfg.get('camera', {}).get('mode', 'hik')
         camera_cfg = main_cfg.get('camera', {})
+        self._use_dynamic_extrinsic = False  # 默认使用静态外参
         if self._camera_mode == 'rosbag':
             # rosbag 模式：TF frame 名称从配置读取（T-DT 使用 livox_frame/map）
             self._tf_source_frame = camera_cfg.get('tf_source_frame', 'livox_frame')
@@ -135,8 +142,33 @@ class Radar(Node):
         self.extrinsic_matrix = np.vstack((self.extrinsic_matrix, [0, 0, 0, 1]))
         # 相机到激光雷达的变换矩阵（通过求逆得到）
         self.extrinsic_matrix_inv = np.linalg.inv(self.extrinsic_matrix)
-        
-        
+
+        # ── Rosbag 动态外参：从 solvePnP rvec/tvec 构建 T_world→camera ──
+        # 在 rosbag 模式下，静态外参 R/T 是由 derive_lidar_camera_extrinsic.py
+        # 错误地将世界坐标平移烘焙到 lidar→camera 变换中的产物。
+        # 正确做法：运行时从 T_w2c (solvePnP) × T_l2w (TF) 动态合成。
+        if self._camera_mode == 'rosbag':
+            wt = data_loader.get('world_transform', {})
+            wt_rvec = wt.get('rvec')
+            wt_tvec = wt.get('tvec')
+            if wt_rvec is not None and wt_tvec is not None:
+                rvec = np.array(wt_rvec, dtype=np.float64)
+                tvec = np.array(wt_tvec, dtype=np.float64)
+                R_w2c, _ = cv2.Rodrigues(rvec)
+                self._T_w2c = np.eye(4)
+                self._T_w2c[:3, :3] = R_w2c
+                self._T_w2c[:3, 3] = tvec.flatten()
+                self._use_dynamic_extrinsic = True
+                self.get_logger().info(
+                    f'[动态外参] 已加载 world_transform, '
+                    f'rvec={rvec.tolist()}, tvec={tvec.tolist()}'
+                )
+            else:
+                self.get_logger().warn(
+                    '[动态外参] converter_config 中缺少 world_transform.rvec/tvec, '
+                    '将使用静态外参（可能不准确）'
+                )
+
         self.start_time = time.time()
         # fps计算
         N = 10
@@ -159,6 +191,8 @@ class Radar(Node):
         self.timer = self.create_timer(1.0, self.on_timer)  # 定时查询 TF
         self.radar_to_field = np.ones((4, 4)) # 激光雷达到赛场的tf矩阵
         self.radar_to_field_inv = np.ones((4, 4)) # 激光雷达到赛场的tf矩阵的逆（用于将点云转换回雷达坐标系）
+        # 动态外参模式下，首次 TF 获取前外参尚不可用
+        self._extrinsic_ready = not self._use_dynamic_extrinsic
 
     # 定时查询 TF
     def on_timer(self):
@@ -175,10 +209,34 @@ class Radar(Node):
             transform_matrix = self.tf_to_matrix(translation, rotation)
             self.radar_to_field = transform_matrix
             self.radar_to_field_inv = np.linalg.inv(self.radar_to_field)
+
+            # ── 动态外参更新 ──
+            # T_lidar→camera = T_world→camera × T_lidar→world
+            # 其中 T_lidar→world = radar_to_field (TF: livox_frame → map)
+            #      T_world→camera = _T_w2c (solvePnP rvec/tvec)
+            if self._use_dynamic_extrinsic:
+                T_l2c = self._T_w2c @ self.radar_to_field
+                self.extrinsic_matrix = T_l2c
+                self.extrinsic_matrix_inv = np.linalg.inv(T_l2c)
+                # 同步更新 Converter 中的 cupy 外参矩阵
+                if _HAS_CUPY:
+                    self.converter.extrinsic_matrix = cp.array(T_l2c)
+                    self.converter.extrinsic_matrix_inv = cp.linalg.inv(
+                        self.converter.extrinsic_matrix
+                    )
+                if not self._extrinsic_ready:
+                    self._extrinsic_ready = True
+                    self.get_logger().info(
+                        '[动态外参] 首次 TF 获取成功，外参已就绪'
+                    )
+                self.get_logger().info(
+                    f'[动态外参] T_l2c 已更新, T[:3,3]={T_l2c[:3,3].tolist()}'
+                )
+
             # self.get_logger().info(f"获取 TF 成功: {transform}")
         except TransformException as ex:
             self.radar_to_field = np.ones((4, 4)) # 之后改为 np.eye(4)（单位阵），或者更优雅的做法：在全局保留上一次成功的矩阵 last_valid_tf
-            self.get_logger().error(f"获取 TF 失败: {ex}")    
+            self.get_logger().error(f"获取 TF 失败: {ex}")
     
     # 将 TF 转换为 4x4 齐次变换矩阵
     def tf_to_matrix(self, translation, rotation):
@@ -283,6 +341,9 @@ class Radar(Node):
         detect_results = msg.detect_results
         if self.lidar_points is None:
             self.get_logger().info("lidar points is None")
+            return
+        if not self._extrinsic_ready:
+            self.get_logger().info("[动态外参] 外参尚未就绪，等待首次 TF...")
             return
         # print(len(self.lidar_points))
         # 创建总体点云pcd

@@ -17,20 +17,20 @@ params:
 
 calib:
   extrinsic:
-    # 从 T-DT 的 solvePnP(rvec/tvec) + GICP(livox→world) 推导
-    # 详见 scripts/derive_lidar_camera_extrinsic.py
+    # 初始外参：与 --identity-init 保持一致
+    # 相机与雷达同位置（零平移），仅保留坐标轴转换
+    # cam_X = -lidar_Y, cam_Y = -lidar_Z, cam_Z = lidar_X
     R:
       rows: 3
       cols: 3
       dt: d
-      data: [0.02212711, -0.99953367, -0.02104362, -0.00625686, 0.02090992, -0.99976179, 0.99973559, 0.02225351, -0.00579126]
+      data: [0.0, -1.0, 0.0, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0]
     T:
       rows: 3
       cols: 1
       dt: d
-      # T 由 GICP 平移 + solvePnP 平移合成，反映相机-雷达安装偏移
-      # GICP 精度有限，此值存在分米级误差；在 10~25m 工作距离上影响 < 数十像素
-      data: [-7.81574588, -1.22280609, 4.59982623]
+      # 与雷达同位置
+      data: [0.0, 0.0, 0.0]
   intrinsic:
     # T-DT 相机内参（来自 T-DT_Radar/config/camera_params.yaml）
     cx: 2046.972383
