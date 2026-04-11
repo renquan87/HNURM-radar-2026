@@ -5,9 +5,9 @@ lidar_node.py — 激光雷达动态点云提取节点（由 C++ 版本迁移）
 订阅：
   /livox/lidar （PointCloud2）
 发布：
-  /lidar_pcds        : 累积原始点云（距离滤波后）
-  /target_pointcloud : 累积动态点云（与静态地图差异）
-  /livox/lidar_other : 调试用，累积的“other”点云
+  /lidar_pcds        : 累积原始点云（距离滤波后，雷达坐标系）
+  /target_pointcloud : 累积动态点云（与静态地图差异，雷达坐标系）
+  /livox/lidar_other : 调试用，累积的“other”点云（雷达坐标系）
   /background_map_debug : 调试用，变换后的静态地图
 """
 
@@ -93,8 +93,8 @@ class DynamicCloudNode(Node):
 
         # ---------- 点云累积容器 ----------
         self.pcdQueue = PcdQueue(max_size=10)                # 原始点云
-        self.accumulated_clouds = deque(maxlen=self.accumulate_time)   # 动态点云
-        self.other_accumulated_clouds = deque(maxlen=self.accumulate_time)  # other 点云
+        self.accumulated_clouds = deque(maxlen=self.accumulate_time)   # 动态点云（雷达系）
+        self.other_accumulated_clouds = deque(maxlen=self.accumulate_time)  # other 点云（雷达系）
 
         # ---------- 订阅与发布 ----------
         self.sub_livox = self.create_subscription(
@@ -111,7 +111,7 @@ class DynamicCloudNode(Node):
         self.publish_thread = threading.Thread(target=self._publish_raw_loop, daemon=True)
         self.publish_thread.start()
 
-        self.get_logger().info('DynamicCloudNode (Python迁移版) 启动完成')
+        self.get_logger().info('DynamicCloudNode (Python迁移版) 启动完成，发布雷达坐标系动态点云')
 
     def _load_and_filter_map(self, pcd_path, leaf_size):
         """加载 PCD 文件并进行体素滤波"""
@@ -125,7 +125,7 @@ class DynamicCloudNode(Node):
     def _build_cloud_msg(self, points, frame_id=None):
         """将 numpy 点云转换为 PointCloud2 消息"""
         if frame_id is None:
-            frame_id = self.map_frame  # 累积点云已变换至地图系
+            frame_id = self.lidar_frame   # 默认发布雷达坐标系
         header = Header()
         header.stamp = self.get_clock().now().to_msg()
         header.frame_id = frame_id
@@ -209,8 +209,7 @@ class DynamicCloudNode(Node):
         else:
             points_lidar = np.empty((0, 3), dtype=np.float32)
 
-        # ⚠️ 关键修正：无论后续 TF 是否成功，先将滤波后的点云加入原始队列，
-        # 保证 /lidar_pcds 的稳定输出（配准必需）
+        # 将滤波后的点云加入原始队列（雷达坐标系）
         if points_lidar.shape[0] > 0:
             self.pcdQueue.add(points_lidar)
             self.get_logger().debug(
@@ -227,18 +226,19 @@ class DynamicCloudNode(Node):
             )
         except Exception as e:
             self.get_logger().warn(f"TF 获取失败: {e}，跳过本帧动态点云处理")
-            return  # 此时原始队列已更新，配准不受影响
+            return
 
         t_tf = time.perf_counter()
 
-        # 构建变换矩阵
+        # 构建变换矩阵及逆矩阵
         t = transform.transform.translation
         r = transform.transform.rotation
         T = np.eye(4)
         T[:3, :3] = Rotation.from_quat([r.x, r.y, r.z, r.w]).as_matrix()
         T[:3, 3] = [t.x, t.y, t.z]
+        T_inv = np.linalg.inv(T)   # 用于将地图系点云转回雷达系
 
-        # 变换点云到地图坐标系
+        # 变换点云到地图坐标系（用于背景减除）
         if points_lidar.shape[0] > 0:
             ones = np.ones((points_lidar.shape[0], 1))
             points_hom = np.hstack([points_lidar, ones])
@@ -259,7 +259,6 @@ class DynamicCloudNode(Node):
                          ((-6.5 - 0.9/np.sqrt(2)) < (y - x)) & ((y - x) < (-6.5 + 0.9/np.sqrt(2))))
 
             # 属于 other 的条件（在飞镖或飞机区域内）
-            # 注意：_dart_filter 接受单点，这里对数组逐点判断
             dart_mask = np.apply_along_axis(self._dart_filter, 1, points_map)
             other_mask = dart_mask | ((x > 13) & (x < 27.5) & (y > 0.2) & (y < 1.356 + 2.4 + 0.8) & (z > 1.7) & (z < 3))
 
@@ -274,25 +273,40 @@ class DynamicCloudNode(Node):
         filtered = np.array(filtered, dtype=np.float32) if filtered else np.empty((0, 3), dtype=np.float32)
         other = np.array(other, dtype=np.float32) if other else np.empty((0, 3), dtype=np.float32)
 
-        # 4. 动态点云提取（基于静态地图 KDTree）
-        dynamic_points = self._extract_dynamic(filtered, self.background_threshold)
+        # 4. 动态点云提取（基于静态地图 KDTree，结果在地图坐标系）
+        dynamic_points_map = self._extract_dynamic(filtered, self.background_threshold)
 
-        # 5. 累积
+        # 5. 将动态点云和 other 点云逆变换回雷达坐标系
+        if dynamic_points_map.shape[0] > 0:
+            ones = np.ones((dynamic_points_map.shape[0], 1))
+            dynamic_hom = np.hstack([dynamic_points_map, ones])
+            dynamic_points = (T_inv @ dynamic_hom.T).T[:, :3].astype(np.float32)
+        else:
+            dynamic_points = np.empty((0, 3), dtype=np.float32)
+
+        if other.shape[0] > 0:
+            ones = np.ones((other.shape[0], 1))
+            other_hom = np.hstack([other, ones])
+            other_lidar = (T_inv @ other_hom.T).T[:, :3].astype(np.float32)
+        else:
+            other_lidar = np.empty((0, 3), dtype=np.float32)
+
+        # 6. 累积（雷达坐标系下的点云）
         self.accumulated_clouds.append(dynamic_points)
-        self.other_accumulated_clouds.append(other)
+        self.other_accumulated_clouds.append(other_lidar)
 
         # 合并累积点云
-        acc_dynamic = np.vstack(self.accumulated_clouds) if self.accumulated_clouds else np.empty((0, 2))
+        acc_dynamic = np.vstack(self.accumulated_clouds) if self.accumulated_clouds else np.empty((0, 3))
         acc_other = np.vstack(self.other_accumulated_clouds) if self.other_accumulated_clouds else np.empty((0, 3))
 
-        # 6. 发布结果（保持原接口）
+        # 7. 发布结果（雷达坐标系）
         if acc_dynamic.shape[0] > 0:
-            self.pub_targets.publish(self._build_cloud_msg(acc_dynamic, frame_id=self.map_frame))
+            self.pub_targets.publish(self._build_cloud_msg(acc_dynamic, frame_id=self.lidar_frame))
         if acc_other.shape[0] > 0:
-            self.pub_other.publish(self._build_cloud_msg(acc_other, frame_id=self.map_frame))
+            self.pub_other.publish(self._build_cloud_msg(acc_other, frame_id=self.lidar_frame))
 
-        # 7. 飞镖/飞机检测（仅日志输出，不发布消息）
-        self._detect_and_log(acc_other)
+        # 8. 飞镖/飞机检测（仍基于地图坐标系的 other 点云进行检测，仅日志输出）
+        self._detect_and_log(other)   # 传入地图系 other 点云，检测区域使用绝对坐标
 
         # 调试：发布静态地图（变换到当前帧）
         if self.pub_bg_debug.get_subscription_count() > 0:
