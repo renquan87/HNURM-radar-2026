@@ -58,7 +58,7 @@ camera:
   #   3. 需要用 ros2 bag play 播放 rosbag，或使用 hnurm_rosbag_launch.py 自动播放
   #   4. radar.py 自动使用 converter_config_rosbag.yaml（T-DT 相机参数）
   #   5. TF frame 使用 rosbag 中点云的 frame_id（livox_frame）和目标坐标系（map）
-  rosbag_path: "/home/rm/rq/projects/radar/lidar-rosbag/competition/全明星赛第一局bag/全明星赛第一局"  # rosbag 目录路径（包含 rosbag.db3 和 metadata.yaml）
+  rosbag_path: "/home/syh/下载/全明星赛第一局"  # rosbag 目录路径（包含 rosbag.db3 和 metadata.yaml）
   compressed_image_topic: "/compressed_image"  # rosbag 中压缩图像的 topic 名称
   # rosbag 中点云的 frame_id，用于 registration TF 查询
   # T-DT rosbag 使用 "livox_frame"，hnurm 自身使用 "livox"

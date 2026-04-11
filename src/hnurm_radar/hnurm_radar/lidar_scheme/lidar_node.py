@@ -1,35 +1,17 @@
 """
-lidar_node.py — 激光雷达点云接收与预处理节点（方案二）
-[订阅 registration 全局地图版 —— 持续更新背景，绝不影响配准]
+lidar_node.py — 激光雷达动态点云提取节点（由 C++ 版本迁移）
+保持原有 Python 节点对外接口不变，不引入 vision_interface 依赖。
 
-功能：
-  订阅 Livox HAP 激光雷达驱动发布的 /livox/lidar 话题（PointCloud2），
-  对原始点云进行距离滤波，累积并发布到 /lidar_pcds（供配准节点使用）。
-  同时订阅配准节点发布的 /global_pcd_map，每次收到新地图时利用当前 TF
-  将其变换到雷达坐标系并更新背景 KDTree，实现动态背景减除。
-
-数据流：
-  /livox/lidar → listener_callback → 距离滤波 → PcdQueue → /lidar_pcds (100Hz)
-                        ↓
-                   背景减除 (使用最新 bg_tree) → /target_pointcloud
-
-  /global_pcd_map → map_callback → 获取 TF → 变换地图 → 更新 bg_tree
-                                                      ↓
-                                          /background_map_debug (调试用)
-
-配置参数（在 configs/main_config.yaml → lidar 段）:
-  - height_threshold:    地面点高度阈值（当前未启用）
-  - min_distance:        近距离滤除阈值（m）
-  - max_distance:        远距离滤除阈值（m）
-  - lidar_topic_name:    点云话题名
-  - background_threshold:背景减除距离阈值（m）
-  - publish_projected:   是否发布前景点云
-  - global_map_topic:    全局地图话题名，默认 "/global_pcd_map"
-  - publish_debug_map:   是否发布变换后的背景地图用于调试，默认 True
+订阅：
+  /livox/lidar （PointCloud2）
+发布：
+  /lidar_pcds        : 累积原始点云（距离滤波后）
+  /target_pointcloud : 累积动态点云（与静态地图差异）
+  /livox/lidar_other : 调试用，累积的“other”点云
+  /background_map_debug : 调试用，变换后的静态地图
 """
 
 import multiprocessing
-import os
 import threading
 import time
 from collections import deque
@@ -50,33 +32,16 @@ from std_msgs.msg import Header
 from ..shared.paths import DATA_DIR, MAIN_CONFIG_PATH, resolve_path
 
 
-class Pcd:
-    def __init__(self, pcd_name=""):
-        self.pcd = o3d.geometry.PointCloud()
-        self.pcd_name = pcd_name
-
-    def set_pcd(self, pcd):
-        self.pcd = pcd
-
-    def update_pcd_points(self, pc):
-        self.pcd.points = o3d.utility.Vector3dVector(pc)
-
-
-class PcdQueue(object):
-    def __init__(self, max_size=90, voxel_size=0.05):
+class PcdQueue:
+    """原始点云累积队列（保持原样）"""
+    def __init__(self, max_size=10):
         self.max_size = max_size
         self.queue = deque(maxlen=max_size)
         self.pc_all = np.empty((0, 3), dtype=np.float64)
-        self.record_times = 0
-        self.point_num = 0
 
     def add(self, pc):
         self.queue.append(pc)
-        if self.record_times < self.max_size:
-            self.record_times += 1
-
         self.update_pc_all()
-        self.point_num = self.cal_point_num()
 
     def get_all_pc(self):
         return self.pc_all
@@ -87,106 +52,83 @@ class PcdQueue(object):
             return
         self.pc_all = np.vstack(self.queue)
 
-    def is_full(self):
-        return self.record_times == self.max_size
 
-    def cal_point_num(self):
-        return len(self.pc_all)
-
-
-class LidarListener(Node):
+class DynamicCloudNode(Node):
     def __init__(self, cfg):
-        super().__init__('lidar_listener')
-        qos__lidar_profile = QoSProfile(
+        super().__init__('dynamic_cloud_node')
+        qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             history=HistoryPolicy.KEEP_LAST,
             depth=10
         )
 
         lidar_cfg = cfg["lidar"]
-        self.height_threshold = lidar_cfg["height_threshold"]
         self.min_distance = lidar_cfg["min_distance"]
         self.max_distance = lidar_cfg["max_distance"]
         self.lidar_topic_name = lidar_cfg["lidar_topic_name"]
 
-        # 背景减除参数
-        self.declare_parameter('background_threshold', lidar_cfg.get('background_threshold', 0.2))
-        self.declare_parameter('publish_projected', lidar_cfg.get('publish_projected', True))
-        self.background_threshold = float(self.get_parameter('background_threshold').value)
-        self.publish_projected = bool(self.get_parameter('publish_projected').value)
+        # ---------- 静态地图加载 ----------
+        pcd_path = resolve_path("/home/syh/rm_lidar_2027/HNURM-radar-2026/data/pointclouds/background/RM2025.pcd")
+        self.map_cloud = self._load_and_filter_map(pcd_path, leaf_size=0.1)
+        self.kd_tree = cKDTree(self.map_cloud)
+        self.get_logger().info(f"静态地图加载完成，点数: {len(self.map_cloud)}")
+
+        # ---------- 参数 ----------
+        self.accumulate_time = 3                     # 累积帧数
+        self.background_threshold = 0.1              # 动态点判定距离阈值
         self.num_cores = max(1, multiprocessing.cpu_count())
 
-        # 全局地图话题名
-        self.declare_parameter('global_map_topic', lidar_cfg.get('global_map_topic', '/global_pcd_map'))
-        self.global_map_topic = self.get_parameter('global_map_topic').value
-
-        # 调试发布选项
-        self.declare_parameter('publish_debug_map', lidar_cfg.get('publish_debug_map', True))
-        self.publish_debug_map = self.get_parameter('publish_debug_map').value
-
-        # ---------- 原始点云累积队列 ----------
-        self.pcdQueue = PcdQueue(max_size=10)
-
-        # ---------- 订阅与发布 ----------
-        self.sub_livox = self.create_subscription(
-            PointCloud2,
-            self.lidar_topic_name,
-            self.listener_callback,
-            10,
-        )
-        self.pub_pcds = self.create_publisher(PointCloud2, "lidar_pcds", qos__lidar_profile)
-        self.pub_targets = self.create_publisher(PointCloud2, "target_pointcloud", qos__lidar_profile)
-
-        # 调试发布者（变换后的背景地图）
-        if self.publish_debug_map:
-            self.pub_bg_debug = self.create_publisher(PointCloud2, "background_map_debug", qos__lidar_profile)
-
-        # ---------- 原始发布线程（约100Hz） ----------
-        self.publish_thread = threading.Thread(target=self.publish_point_cloud, daemon=True)
-        self.publish_thread.start()
-
-        # ===== 新增：订阅全局地图并进行 TF 变换 =====
-        # 判断是否为 rosbag 模式，动态设置 frame_id
+        # TF 设置
         camera_cfg = cfg.get("camera", {})
         self._camera_mode = camera_cfg.get("mode", "hik")
-
         if self._camera_mode == "rosbag":
-            # rosbag 模式：从配置读取 TF frame 名称
             self.lidar_frame = camera_cfg.get("tf_source_frame", "livox_frame")
             self.map_frame = camera_cfg.get("tf_target_frame", "map")
-            self.get_logger().info(
-                f"[rosbag 模式] TF: {self.lidar_frame} → {self.map_frame}"
-            )
         else:
-            # 正常模式：使用默认值
             self.lidar_frame = "livox"
             self.map_frame = "map"
 
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
-        self.bg_tree = None            # 雷达坐标系下的 KDTree
-        self.bg_tree_lock = threading.Lock()
+        # ---------- 点云累积容器 ----------
+        self.pcdQueue = PcdQueue(max_size=10)                # 原始点云
+        self.accumulated_clouds = deque(maxlen=self.accumulate_time)   # 动态点云
+        self.other_accumulated_clouds = deque(maxlen=self.accumulate_time)  # other 点云
 
-        # 订阅配准节点发布的全局地图（QoS 与发布方兼容）
-        self.map_sub = self.create_subscription(
-            PointCloud2,
-            self.global_map_topic,
-            self.map_callback,
-            rclpy.qos.QoSProfile(
-                reliability=ReliabilityPolicy.RELIABLE,
-                durability=rclpy.qos.DurabilityPolicy.VOLATILE,  # 必须与发布方一致
-                depth=1
-            )
+        # ---------- 订阅与发布 ----------
+        self.sub_livox = self.create_subscription(
+            PointCloud2, self.lidar_topic_name, self.callback, 10
         )
-        # ==============================================
+        self.pub_pcds = self.create_publisher(PointCloud2, "lidar_pcds", qos_profile)
+        self.pub_targets = self.create_publisher(PointCloud2, "target_pointcloud", qos_profile)
+        self.pub_other = self.create_publisher(PointCloud2, "livox/lidar_other", qos_profile)  # 调试用
 
-        self.get_logger().info('LidarListener 初始化完成，等待全局地图以启用背景减除...')
+        # 调试：发布变换后的静态地图（可选）
+        self.pub_bg_debug = self.create_publisher(PointCloud2, "background_map_debug", qos_profile)
 
-    def _build_cloud_msg(self, points):
+        # 原始发布线程（保持 100Hz 发布 /lidar_pcds）
+        self.publish_thread = threading.Thread(target=self._publish_raw_loop, daemon=True)
+        self.publish_thread.start()
+
+        self.get_logger().info('DynamicCloudNode (Python迁移版) 启动完成')
+
+    def _load_and_filter_map(self, pcd_path, leaf_size):
+        """加载 PCD 文件并进行体素滤波"""
+        pcd = o3d.io.read_point_cloud(pcd_path)
+        if pcd.is_empty():
+            self.get_logger().error(f"无法读取地图文件: {pcd_path}")
+            return np.empty((0, 3), dtype=np.float32)
+        pcd = pcd.voxel_down_sample(voxel_size=leaf_size)
+        return np.asarray(pcd.points, dtype=np.float32)
+
+    def _build_cloud_msg(self, points, frame_id=None):
+        """将 numpy 点云转换为 PointCloud2 消息"""
+        if frame_id is None:
+            frame_id = self.map_frame  # 累积点云已变换至地图系
         header = Header()
         header.stamp = self.get_clock().now().to_msg()
-        header.frame_id = self.lidar_frame
+        header.frame_id = frame_id
         fields = [
             PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
             PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
@@ -196,120 +138,212 @@ class LidarListener(Node):
         return pc2.create_cloud(header, fields, points)
 
     def _read_points_array(self, msg):
+        """从 PointCloud2 读取 xyz 数组"""
         points = np.array(
             list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)),
             dtype=[("x", np.float32), ("y", np.float32), ("z", np.float32)],
         )
         if points.size == 0:
-            return np.empty((0, 3), dtype=np.float64)
-        return np.stack([points["x"], points["y"], points["z"]], axis=-1).astype(np.float64)
+            return np.empty((0, 3), dtype=np.float32)
+        return np.stack([points["x"], points["y"], points["z"]], axis=-1).astype(np.float32)
 
-    def publish_point_cloud(self):
-        """发布累积点云线程（约 100Hz）—— 原始代码，一字未改"""
-        last_time = time.time()
+    def _publish_raw_loop(self):
+        """持续发布累积的原始点云（保持原接口）"""
+        last_pub_time = time.time()
         while rclpy.ok():
-            cur_time = time.time()
-            _delta_time = cur_time - last_time
-            last_time = cur_time
-            time.sleep(0.01)
-
+            time.sleep(0.01)  # ~100Hz
             points = self.pcdQueue.get_all_pc()
             if len(points) > 0:
-                self.pub_pcds.publish(self._build_cloud_msg(points))
+                self.pub_pcds.publish(self._build_cloud_msg(points, frame_id=self.lidar_frame))
+                # 每秒打印一次发布统计（避免刷屏）
+                now = time.time()
+                if now - last_pub_time > 1.0:
+                    self.get_logger().debug(
+                        f"/lidar_pcds 发布 {len(points)} 点，队列长度 {len(self.pcdQueue.queue)}"
+                    )
+                    last_pub_time = now
 
-    def map_callback(self, msg):
-        """
-        全局地图回调：每次收到配准节点发布的最新地图后，
-        立即获取当前 TF 并变换到雷达坐标系，更新背景 KDTree。
-        """
-        points_map = self._read_points_array(msg)
-        if points_map.shape[0] == 0:
-            self.get_logger().warn('收到的全局地图点数为空')
-            return
+    # ---------- 区域过滤函数（与 C++ 完全一致）----------
+    @staticmethod
+    def _dart_filter(point):
+        """飞镖区域"""
+        x, y, z = point
+        return (x > 28 - 0.5889 - 0.1885 and x < 28 - 0.5889) and \
+               (y > 3.925 and y < 4.525) and \
+               (z > 2.4722 - 0.859 + 0.1 and z < 2.4722)
 
-        self.get_logger().info(f'收到全局地图，点数: {len(points_map)}，开始 TF 变换...')
+    @staticmethod
+    def _fly_safe_filter(point):
+        """飞机起飞安全区"""
+        x, y, z = point
+        return (x > 28 - 2.775 and x < 27.5) and \
+               (y > 0.2 and y < 2.2) and \
+               (z > 1.7 and z < 3)
 
+    @staticmethod
+    def _fly_warn_filter(point):
+        """飞机警告区"""
+        x, y, z = point
+        return (x > 19.83 and x < 28 - 2.7) and \
+               (y > 0.2 and y < 1.356 + 2.4 + 0.8) and \
+               (z > 1.7 and z < 3)
+
+    @staticmethod
+    def _fly_alarm_filter(point):
+        """飞机报警区"""
+        x, y, z = point
+        return (x > 13 and x < 20.5) and \
+               (y > 0.2 and y < 1.356 + 2.4 + 0.8) and \
+               (z > 1.7 and z < 3)
+
+    # ---------- 主要回调 ----------
+    def callback(self, msg):
+        t_start = time.perf_counter()
+
+        # 1. 读取并距离滤波
+        points_lidar = self._read_points_array(msg)
+        if points_lidar.shape[0] > 0:
+            dist = np.linalg.norm(points_lidar, axis=1)
+            mask = (dist > self.min_distance) & (dist < self.max_distance)
+            points_lidar = points_lidar[mask]
+        else:
+            points_lidar = np.empty((0, 3), dtype=np.float32)
+
+        # ⚠️ 关键修正：无论后续 TF 是否成功，先将滤波后的点云加入原始队列，
+        # 保证 /lidar_pcds 的稳定输出（配准必需）
+        if points_lidar.shape[0] > 0:
+            self.pcdQueue.add(points_lidar)
+            self.get_logger().debug(
+                f"原始队列新增 {points_lidar.shape[0]} 点，累计点数: {len(self.pcdQueue.get_all_pc())}"
+            )
+        else:
+            self.get_logger().debug("当前帧距离滤波后无有效点")
+
+        # 2. 获取 TF 变换 (lidar_frame -> map_frame)
         try:
             transform = self.tf_buffer.lookup_transform(
-                self.lidar_frame,
-                self.map_frame,
-                rclpy.time.Time(),
-                timeout=rclpy.duration.Duration(seconds=1.0)
+                self.map_frame, msg.header.frame_id, rclpy.time.Time(),
+                timeout=rclpy.duration.Duration(seconds=0.1)
             )
         except Exception as e:
-            self.get_logger().warn(f'获取 TF 失败: {e}，本次地图更新跳过')
-            return
+            self.get_logger().warn(f"TF 获取失败: {e}，跳过本帧动态点云处理")
+            return  # 此时原始队列已更新，配准不受影响
 
-        # 构造变换矩阵 T_map_to_livox（从 map 到 livox）
+        t_tf = time.perf_counter()
+
+        # 构建变换矩阵
         t = transform.transform.translation
         r = transform.transform.rotation
-        T_map_to_livox = np.eye(4)
-        T_map_to_livox[:3, :3] = Rotation.from_quat([r.x, r.y, r.z, r.w]).as_matrix()
-        T_map_to_livox[:3, 3] = [t.x, t.y, t.z]
+        T = np.eye(4)
+        T[:3, :3] = Rotation.from_quat([r.x, r.y, r.z, r.w]).as_matrix()
+        T[:3, 3] = [t.x, t.y, t.z]
 
-        # 变换点云到雷达坐标系
-        ones = np.ones((points_map.shape[0], 1))
-        points_hom = np.hstack([points_map, ones])
-        points_lidar = (T_map_to_livox @ points_hom.T).T[:, :3].astype(np.float32)
+        # 变换点云到地图坐标系
+        if points_lidar.shape[0] > 0:
+            ones = np.ones((points_lidar.shape[0], 1))
+            points_hom = np.hstack([points_lidar, ones])
+            points_map = (T @ points_hom.T).T[:, :3].astype(np.float32)
+        else:
+            points_map = np.empty((0, 3), dtype=np.float32)
 
-        # 更新 KDTree（原子操作）
-        with self.bg_tree_lock:
-            self.bg_tree = cKDTree(points_lidar)
+        # 3. 区域过滤（分为 filtered 和 other）
+        filtered = []
+        other = []
+        if points_map.shape[0] > 0:
+            x, y, z = points_map[:, 0], points_map[:, 1], points_map[:, 2]
 
-        self.get_logger().info(
-            f'背景地图已更新，雷达系点数: {len(points_lidar)}，'
-            f'阈值: {self.background_threshold:.3f} m'
+            # 主过滤条件（C++ 中的复杂条件）
+            main_mask = (x < 3) | (x > 28) | (y < 0) | (y > 15) | (z < 0) | (z > 1.4) | \
+                        ((y > 0) & (y < 5) & (x > 25)) | \
+                        (((21.5 - 2.9/np.sqrt(2)) < (x + y)) & ((x + y) < (21.5 + 2.9/np.sqrt(2))) &
+                         ((-6.5 - 0.9/np.sqrt(2)) < (y - x)) & ((y - x) < (-6.5 + 0.9/np.sqrt(2))))
+
+            # 属于 other 的条件（在飞镖或飞机区域内）
+            # 注意：_dart_filter 接受单点，这里对数组逐点判断
+            dart_mask = np.apply_along_axis(self._dart_filter, 1, points_map)
+            other_mask = dart_mask | ((x > 13) & (x < 27.5) & (y > 0.2) & (y < 1.356 + 2.4 + 0.8) & (z > 1.7) & (z < 3))
+
+            # 分类
+            for i in range(points_map.shape[0]):
+                if main_mask[i]:
+                    if other_mask[i]:
+                        other.append(points_map[i])
+                    continue
+                filtered.append(points_map[i])
+
+        filtered = np.array(filtered, dtype=np.float32) if filtered else np.empty((0, 3), dtype=np.float32)
+        other = np.array(other, dtype=np.float32) if other else np.empty((0, 3), dtype=np.float32)
+
+        # 4. 动态点云提取（基于静态地图 KDTree）
+        dynamic_points = self._extract_dynamic(filtered, self.background_threshold)
+
+        # 5. 累积
+        self.accumulated_clouds.append(dynamic_points)
+        self.other_accumulated_clouds.append(other)
+
+        # 合并累积点云
+        acc_dynamic = np.vstack(self.accumulated_clouds) if self.accumulated_clouds else np.empty((0, 2))
+        acc_other = np.vstack(self.other_accumulated_clouds) if self.other_accumulated_clouds else np.empty((0, 3))
+
+        # 6. 发布结果（保持原接口）
+        if acc_dynamic.shape[0] > 0:
+            self.pub_targets.publish(self._build_cloud_msg(acc_dynamic, frame_id=self.map_frame))
+        if acc_other.shape[0] > 0:
+            self.pub_other.publish(self._build_cloud_msg(acc_other, frame_id=self.map_frame))
+
+        # 7. 飞镖/飞机检测（仅日志输出，不发布消息）
+        self._detect_and_log(acc_other)
+
+        # 调试：发布静态地图（变换到当前帧）
+        if self.pub_bg_debug.get_subscription_count() > 0:
+            self.pub_bg_debug.publish(self._build_cloud_msg(self.map_cloud, frame_id=self.map_frame))
+
+        t_end = time.perf_counter()
+        self.get_logger().debug(
+            f"回调耗时: {(t_end - t_start)*1000:.2f} ms, TF耗时: {(t_tf - t_start)*1000:.2f} ms"
         )
 
-        # 调试：发布变换后的背景地图
-        if self.publish_debug_map:
-            debug_msg = self._build_cloud_msg(points_lidar)
-            self.pub_bg_debug.publish(debug_msg)
-            self.get_logger().debug('已发布背景地图到 /background_map_debug')
+    def _extract_dynamic(self, points, threshold):
+        """利用 KDTree 提取与静态地图距离大于阈值的点"""
+        if points.shape[0] == 0:
+            return np.empty((0, 3), dtype=np.float32)
+        dist, _ = self.kd_tree.query(points, k=1, workers=self.num_cores)
+        mask = dist > threshold
+        return points[mask]
 
-    def background_subtraction(self, current_points):
-        """背景减除：移除与背景地图点距离小于阈值的点"""
-        with self.bg_tree_lock:
-            tree = self.bg_tree
-
-        if tree is None or current_points.shape[0] == 0:
-            return current_points
-
-        query_points = np.asarray(current_points, dtype=np.float32)
-        distances, _ = tree.query(query_points, k=1, workers=self.num_cores)
-        mask = distances > self.background_threshold
-        return current_points[mask]
-
-    def publish_target(self, points):
-        if not self.publish_projected:
+    def _detect_and_log(self, other_points):
+        """飞镖/飞机检测，仅输出日志"""
+        if other_points.shape[0] == 0:
             return
-        if len(points) == 0:
-            return
-        self.pub_targets.publish(self._build_cloud_msg(points))
 
-    def listener_callback(self, data):
-        """点云回调：距离滤波 → 背景减除 → 累积原始点云（原始逻辑未改动）"""
-        points = self._read_points_array(data)
-        if points.shape[0] > 0:
-            dist = np.linalg.norm(points, axis=1)
-            points = points[dist > self.min_distance]
-            dist = np.linalg.norm(points, axis=1)
-            points = points[dist < self.max_distance]
+        # 飞镖检测
+        dart_mask = np.apply_along_axis(self._dart_filter, 1, other_points)
+        if np.sum(dart_mask) > 5:
+            self.get_logger().warn(f"发现飞镖！点数: {np.sum(dart_mask)}")
 
-        target_points = self.background_subtraction(points)
-        self.publish_target(target_points)
-        self.pcdQueue.add(points)
+        # 飞机区域检测
+        safe_mask = np.apply_along_axis(self._fly_safe_filter, 1, other_points)
+        warn_mask = np.apply_along_axis(self._fly_warn_filter, 1, other_points)
+        alarm_mask = np.apply_along_axis(self._fly_alarm_filter, 1, other_points)
 
-    def get_all_pc(self):
-        return self.pcdQueue.get_all_pc()
+        cnt_safe = np.sum(safe_mask)
+        cnt_warn = np.sum(warn_mask)
+        cnt_alarm = np.sum(alarm_mask)
+
+        if cnt_alarm > 40:
+            self.get_logger().error("🚨 飞机报警区域检测到目标！")
+        elif cnt_warn > 40:
+            self.get_logger().warn("⚠️  飞机警告区域检测到目标！")
+        elif cnt_safe > 40:
+            self.get_logger().warn("✈️  飞机安全区域检测到目标！")
 
 
 def main(args=None):
-    main_cfg = YAML().load(open(MAIN_CONFIG_PATH, encoding='Utf-8', mode='r'))
+    main_cfg = YAML().load(open(MAIN_CONFIG_PATH, encoding='utf-8', mode='r'))
     rclpy.init(args=args)
-    lidar = LidarListener(main_cfg)
-    rclpy.spin(lidar)
-    lidar.destroy_node()
+    node = DynamicCloudNode(main_cfg)
+    rclpy.spin(node)
+    node.destroy_node()
     rclpy.shutdown()
 
 
