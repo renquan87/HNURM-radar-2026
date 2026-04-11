@@ -43,6 +43,7 @@ _CONVERTER_CONFIG_DEFAULT_PATH = os.path.join(CONFIGS_DIR, "converter_config.yam
 _CONVERTER_CONFIG_ROSBAG_PATH = os.path.join(CONFIGS_DIR, "converter_config_rosbag.yaml")
 PERSPECTIVE_CALIB_PATH = os.path.join(CONFIGS_DIR, "perspective_calib.json")
 BYTETRACK_CONFIG_PATH = os.path.join(CONFIGS_DIR, "bytetrack.yaml")
+BOTSORT_CONFIG_PATH = os.path.join(CONFIGS_DIR, "botsort.yaml")
 HAP_CONFIG_PATH = os.path.join(CONFIGS_DIR, "HAP_config.json")
 ICP_RVIZ_PATH = os.path.join(CONFIGS_DIR, "icp.rviz")
 

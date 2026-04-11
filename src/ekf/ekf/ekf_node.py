@@ -49,12 +49,9 @@ from ekf.RobotEKF import RobotEKF
 # ---------- 读取 main_config.yaml ----------
 # 优先从 hnurm_radar 的统一路径管理模块获取配置文件路径；
 # 若跨包导入失败（如单独测试 ekf 包），则回退到 __file__ 拼接。
-try:
-    from hnurm_radar.shared.paths import MAIN_CONFIG_PATH as _MAIN_CONFIG
-except ImportError:
-    _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-    _PROJECT_ROOT = os.path.normpath(os.path.join(_THIS_DIR, '..', '..', '..'))
-    _MAIN_CONFIG = os.path.join(_PROJECT_ROOT, 'configs', 'main_config.yaml')
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.normpath(os.path.join(_THIS_DIR, '..', '..', '..'))
+_MAIN_CONFIG = os.path.join(_PROJECT_ROOT, 'configs', 'main_config.yaml')
 
 def _load_debug_flag() -> bool:
     """从 main_config.yaml 读取 global.debug_coordinate_publish 配置。
@@ -87,8 +84,7 @@ class RobotInfo(object):
     def calculateInfo(self, last_info):
 
         if last_info.x > 0 and last_info.y > 0:
-            t = (self.time - last_info.time) # 转s
-
+            t = (self.time - last_info.time) / 1000.0  # 修改说明：时间单位由 ms 转为 s
             if abs(t) < 1e-6:  # 避免除零
                 return
 
@@ -97,6 +93,10 @@ class RobotInfo(object):
 
             self.a_x = (self.v_x - last_info.v_x) / t
             self.a_y = (self.v_y - last_info.v_y) / t
+
+            # 修改说明：保存当前速度，供下一帧计算加速度
+            self.last_v_x = self.v_x
+            self.last_v_y = self.v_y
 
 
 # ── 诊断相关常量 ──
@@ -217,6 +217,10 @@ class EKFNode(Node):
         for i in range(NUM_SLOTS):
             self._slot_has_detection[i] = False
 
+        # 清空本帧的观测时间戳，防止上一帧数据被复用
+        for i in range(NUM_SLOTS):
+            self.locations_queue[1][i].time = 0
+
         # 更新测量值
         for i in range(len(locations.locs)):
             location = locations.locs[i]
@@ -265,26 +269,34 @@ class EKFNode(Node):
         estimated_locations = [[0, 0, 0, 0] for _ in range(NUM_SLOTS)]
         # 对每个机器人进行卡尔曼滤波
         for i in range(len(self.locations_queue[0])):
-            # 如果没有新的数据,则跳过
-            if self.locations_queue[1][i].time == 0:
-                continue
-            # 计算加速度
-            self.locations_queue[1][i].calculateInfo(self.locations_queue[0][i])
-            self.kalfilt[i].update_acceleration(self.locations_queue[1][i].a_x, self.locations_queue[1][i].a_y)
-            estimated_locations[i] = (self.kalfilt[i].step((self.locations_queue[1][i].x, self.locations_queue[1][i].v_x, self.locations_queue[1][i].y, self.locations_queue[1][i].v_y)))
-            
-        ## 保存历史位置（每帧更新，用于下一帧速度/加速度计算） 等测试完成之后再考虑优化
+         # tunning: BUG FIX 核心改动——修正条件判断逻辑，启用predict-only模式
+            # 原代码: if self.locations_queue[1][i].time == 0: continue
+            # 问题: time==0表示无新观测，却跳过整个滤波，导致无观测时不做预测
+            # 改正: 改为 if self.locations_queue[1][i].time != 0，有新观测才进行 update
+            if self.locations_queue[1][i].time != 0:
+                # 有新观测：执行完整的 update 步骤
+                # 计算加速度
+                self.locations_queue[1][i].calculateInfo(self.locations_queue[0][i])
+                self.kalfilt[i].update_acceleration(self.locations_queue[1][i].a_x, self.locations_queue[1][i].a_y)
+                estimated_locations[i] = (self.kalfilt[i].step((self.locations_queue[1][i].x, self.locations_queue[1][i].v_x, self.locations_queue[1][i].y, self.locations_queue[1][i].v_y)))
+            else:
+                # 修改说明：无新观测时执行 EKF predict-only，维持轨迹连续
+                estimated_locations[i] = self.kalfilt[i].predict_only()
+
+        # 修改说明：
+        # 历史队列仅在“有新观测(time>0)”时更新，避免无观测帧污染历史状态。
         for i in range(len(self.locations_queue[0])):
-            # if self.locations_queue[1][i].time > 0:
             if self.locations_queue[1][i].time > 0:
                 self.locations_queue[0][i].time = self.locations_queue[1][i].time
                 self.locations_queue[0][i].x = self.locations_queue[1][i].x
                 self.locations_queue[0][i].y = self.locations_queue[1][i].y
                 self.locations_queue[0][i].z = self.locations_queue[1][i].z
-                # self.locations_queue[0][i].v_x = self.locations_queue[1][i].v_x # 等测试完成之后再考虑优化
-                # self.locations_queue[0][i].v_y = self.locations_queue[1][i].v_y # 等测试完成之后再考虑优化
-        self.get_logger().info(f"Estimated locations: {estimated_locations}")
-        
+                self.locations_queue[0][i].v_x = self.locations_queue[1][i].v_x
+                self.locations_queue[0][i].v_y = self.locations_queue[1][i].v_y
+
+        # 修改说明：估计结果日志降级为 DEBUG，避免高频 INFO 影响定时器稳定性
+        self.get_logger().debug(f"Estimated locations: {estimated_locations}")
+
         # 发布滤波后的位置信息
         # 使用 _slot_to_robot 反向映射，直接从 slot 索引获取 (robot_id, label)
         locations = Locations()
