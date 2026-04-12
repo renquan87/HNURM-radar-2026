@@ -28,6 +28,63 @@ yolo_pipeline.py — 三阶段 YOLO 推理引擎
 import math
 import cv2
 
+# ---------- TensorRT 10 兼容性 Monkey-Patch (完整版) ----------
+import tensorrt as trt
+
+if not hasattr(trt.ICudaEngine, 'num_bindings'):
+    # ---- ICudaEngine 补丁 ----
+    # 1. num_bindings → num_io_tensors
+    trt.ICudaEngine.num_bindings = property(lambda self: self.num_io_tensors)
+
+    # 2. binding_is_input → get_tensor_mode
+    def engine_binding_is_input(self, index):
+        name = self.get_tensor_name(index)
+        return self.get_tensor_mode(name) == trt.TensorIOMode.INPUT
+
+    trt.ICudaEngine.binding_is_input = engine_binding_is_input
+
+    # 3. get_binding_index → get_tensor_index
+    def engine_get_binding_index(self, name):
+        return self.get_tensor_index(name)
+
+    trt.ICudaEngine.get_binding_index = engine_get_binding_index
+
+    # 4. get_binding_name → get_tensor_name
+    def engine_get_binding_name(self, index):
+        return self.get_tensor_name(index)
+
+    trt.ICudaEngine.get_binding_name = engine_get_binding_name
+
+    # 5. get_binding_shape → get_tensor_shape
+    def engine_get_binding_shape(self, index):
+        name = self.get_tensor_name(index)
+        return self.get_tensor_shape(name)
+
+    trt.ICudaEngine.get_binding_shape = engine_get_binding_shape
+
+    # 6. get_binding_dtype → get_tensor_dtype
+    def engine_get_binding_dtype(self, index):
+        name = self.get_tensor_name(index)
+        return self.get_tensor_dtype(name)
+
+    trt.ICudaEngine.get_binding_dtype = engine_get_binding_dtype
+
+    # ---- IExecutionContext 补丁 ----
+    if hasattr(trt, 'IExecutionContext'):
+        def context_get_binding_shape(self, index):
+            name = self.engine.get_tensor_name(index)
+            return self.get_tensor_shape(name)
+
+        def context_set_binding_shape(self, index, shape):
+            name = self.engine.get_tensor_name(index)
+            return self.set_input_shape(name, shape)
+
+        trt.IExecutionContext.get_binding_shape = context_get_binding_shape
+        trt.IExecutionContext.set_binding_shape = context_set_binding_shape
+
+    print("[MonkeyPatch] 已为 TensorRT 10 注入完整旧版 API 兼容层")
+# ----------------------------------------------------------------
+
 from .label_mappings import (
     Gray2Blue, Gray2Red, gray2gray, Blue2Gray, Red2Gray,
 )
@@ -67,7 +124,6 @@ class YoloPipeline:
         self._resolve = resolve_fn or (lambda x: x)
 
         # ── 加载 YOLO 模型 ──
-        # 延迟到这里才 import，避免在非推理场景（如 label_mappings）中强制依赖 ultralytics
         from ultralytics import YOLO
 
         self._log.info('YoloPipeline: 正在加载 YOLO 模型 ...')
@@ -94,13 +150,13 @@ class YoloPipeline:
         self.class_num = len(self.labels)
         self.high_conf_correction = high_conf_correction
 
-        # ── 灰色装甲板亮度阈值（从配置读取，兼容旧配置） ──
+        # ── 灰色装甲板亮度阈值 ──
         gray_cfg = det_cfg.get('params', {}).get('gray_threshold', {})
         self.gray_thresh_blue = gray_cfg.get('blue', 35)
         self.gray_thresh_red = gray_cfg.get('red', 15)
         self.gray_thresh_stage3 = gray_cfg.get('stage3', 30)
 
-        # ── 标签映射（使用模块级常量的引用） ──
+        # ── 标签映射 ──
         self.Gray2Blue = Gray2Blue
         self.Gray2Red = Gray2Red
         self.gray2gray = gray2gray
@@ -129,14 +185,7 @@ class YoloPipeline:
         return False
 
     def parse_results(self, results):
-        """解析 Stage 1 追踪结果为 numpy 数组。
-
-        Returns
-        -------
-        confidences : ndarray, shape (N,)
-        boxes : ndarray, shape (N, 4)  — xywh 格式
-        track_ids : list[int]
-        """
+        """解析 Stage 1 追踪结果为 numpy 数组。"""
         confidences = results[0].boxes.conf.cpu().numpy()
         boxes = results[0].boxes.xywh.cpu().numpy()
         track_ids = results[0].boxes.id.int().cpu().tolist()
@@ -149,21 +198,7 @@ class YoloPipeline:
         return results
 
     def classify_infer(self, roi_list):
-        """Stage 2 + Stage 3：对 ROI 列表进行分类推理。
-
-        对每个 ROI 同时运行 Stage 2（颜色/编号分类）和 Stage 3（灰色装甲板分类），
-        根据灰度阈值判定是否使用灰色结果覆盖 Stage 2 结果。
-
-        Parameters
-        ----------
-        roi_list : list[ndarray]
-            BGR 格式的 ROI 图像列表。
-
-        Returns
-        -------
-        (label_list, conf_list) : tuple[list[int], list[float]]
-            每个 ROI 的分类标签和置信度。若无检测结果返回 ``-1``。
-        """
+        """Stage 2 + Stage 3：对 ROI 列表进行分类推理。"""
         results = []
         gray_results = []
         for roi in roi_list:
@@ -203,7 +238,6 @@ class YoloPipeline:
             if len(tmp) != 0:
                 x1, y1, x2, y2 = tmp[:4]
                 gray_region = roi_gray[int(y1):int(y2), int(x1):int(x2)]
-                # 边界检查：防止裁剪区域为空时 cv2.mean 崩溃
                 if label < 6 and gray_region.size > 0 and cv2.mean(gray_region)[0] < self.gray_thresh_blue:
                     label = self.Blue2Gray[int(label)]
                 elif label > 5 and gray_region.size > 0 and cv2.mean(gray_region)[0] < self.gray_thresh_red:
@@ -220,23 +254,7 @@ class YoloPipeline:
         return label_list, conf_list
 
     def infer(self, frame):
-        """完整三阶段推理管线。
-
-        流程：Stage 1 追踪 → ROI 裁剪 → Stage 2/3 分类 → 投票 → 判重 → 标注
-
-        Parameters
-        ----------
-        frame : ndarray
-            BGR 格式的输入图像。
-
-        Returns
-        -------
-        (annotated_frame, zip_results) : tuple
-            - ``annotated_frame``: 带标注的图像（原地修改）
-            - ``zip_results``: 结果列表，每个元素为
-              ``[xyxy_box, xywh_box, track_id, label_str]``。
-              若无检测结果则为 ``None``。
-        """
+        """完整三阶段推理管线。"""
         if frame is None:
             return None, None
 
@@ -244,7 +262,6 @@ class YoloPipeline:
         if self.is_results_empty(results):
             return frame, None
 
-        # exist_armor[label] 记录当前帧中每个类别被哪个 track_id 占据（用于判重）
         exist_armor = [-1] * (self.class_num + 6)
         draw_candidate = []
         confidences, boxes, track_ids = self.parse_results(results)
@@ -254,7 +271,6 @@ class YoloPipeline:
         box_list = []
 
         for box, track_id, conf in zip(boxes, track_ids, confidences):
-            # 周期性衰减投票值
             if self.loop_times % self.life_time == 1:
                 for i in range(self.class_num):
                     self.Track_value[int(track_id)][i] = math.floor(
@@ -264,7 +280,6 @@ class YoloPipeline:
             x_left = x - w / 2
             y_left = y - h / 2
             roi = frame[int(y_left):int(y_left + h), int(x_left):int(x_left + w)]
-            # 边界检查：防止空 ROI
             if roi.size == 0:
                 continue
             roi_list.append(roi)
@@ -298,7 +313,6 @@ class YoloPipeline:
                     status = 1
                     if self.Status[track_id] < 6:
                         self.Status[track_id] += status
-                    # 使用 .get() 防止未知灰甲板 label 导致 KeyError
                     if label < 6 and self.Gray2Blue.get(classify_label) == label:
                         self.Track_value[int(track_id)][int(float(
                             self.Gray2Blue[classify_label]))] += 0.5 + conf * 0.5
@@ -313,9 +327,7 @@ class YoloPipeline:
                     if self.Status[int(track_id)] < 4:
                         self.Status[int(track_id)] = 0
 
-                    # 投票权重计算
                     vote_weight = 0.5 + conf * 0.5
-                    # 高置信度纠正：当前帧分类与投票结果不一致时，加大权重加速纠正
                     if (self.high_conf_correction
                             and conf > 0.85
                             and label != int(float(classify_label))
@@ -327,7 +339,6 @@ class YoloPipeline:
             label = self.Track_value[int(track_id)].index(
                 max(self.Track_value[int(track_id)]))
 
-            # ── 判重：同一类别只保留投票值最高的 track_id ──
             if label < len(exist_armor) and exist_armor[label] != -1:
                 old_id = exist_armor[label]
                 if self.Track_value[int(track_id)][label] < self.Track_value[int(old_id)][label]:
@@ -343,7 +354,6 @@ class YoloPipeline:
                 if label < len(exist_armor):
                     exist_armor[label] = track_id
 
-            # 判断投票是否有效（所有类别计数相同 = 无有效投票）
             pd = self.Track_value[int(track_id)][0]
             same = True
             for j in range(self.class_num - 1):
@@ -367,7 +377,6 @@ class YoloPipeline:
             self.id_candidate[track_id] = index
             index += 1
 
-        # 在图像上画出检测结果
         for box in draw_candidate:
             tid, x1, y1, x2, y2, lbl = box
             cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 128, 0), 3)
@@ -380,13 +389,12 @@ class YoloPipeline:
         return frame, zip_results
 
     def reset_tracking_state(self):
-        """重置投票表和状态（视频循环时调用，避免状态残留）。"""
+        """重置投票表和状态。"""
         for i in range(self._max_track_id):
             self.Track_value[i] = [0] * self.class_num
             self.Status[i] = 0
         self.id_candidate = [0] * self._max_track_id
 
-        # 重置 ByteTrack 跟踪器
         if (hasattr(self.model_stage1, 'predictor')
                 and self.model_stage1.predictor is not None):
             if hasattr(self.model_stage1.predictor, 'trackers'):
@@ -394,8 +402,6 @@ class YoloPipeline:
 
 
 class _PrintLogger:
-    """简易日志后端，当未提供 ROS logger 时使用 print 输出。"""
-
     @staticmethod
     def info(msg):
         print(f"[INFO] {msg}")

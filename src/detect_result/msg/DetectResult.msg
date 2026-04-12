@@ -12,3 +12,8 @@ int32[4] xyxy_box      # 检测框的左上角和右下角像素坐标 [x1, y1, 
 float32[4] xywh_box    # 检测框的中心点+宽高归一化坐标 [cx, cy, w, h]，值域 0~1
 int32 track_id         # ByteTrack 分配的跨帧追踪 ID，同一目标在连续帧中保持相同 ID
 string label           # 三阶段分类结果标签，如 "R1"(红1号)、"B3"(蓝3号)、"NULL"(未识别)
+# 单目3D赛场坐标（单位：米）
+float64 field_x
+float64 field_y
+float64 field_z
+
