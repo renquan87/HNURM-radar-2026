@@ -85,7 +85,7 @@ class Radar(Node):
         # binocular_camera_cfg_path = "./configs/bin_cam_config.yaml"
         main_cfg = YAML().load(open(MAIN_CONFIG_PATH, encoding='Utf-8', mode='r'))
         converter_config_path = CONVERTER_CONFIG_PATH
-        
+
         # 判断是否为 rosbag 模式
         self._camera_mode = main_cfg.get('camera', {}).get('mode', 'hik')
         camera_cfg = main_cfg.get('camera', {})
@@ -101,7 +101,7 @@ class Radar(Node):
             # 正常模式：使用 hnurm 默认 frame 名称
             self._tf_source_frame = 'livox'
             self._tf_target_frame = 'map'
-        
+
         # 全局变量
         self.global_my_color = main_cfg['global']['my_color']
         is_debug = main_cfg['global']['is_debug']
@@ -113,17 +113,17 @@ class Radar(Node):
         self.frame_id = 1
         # 计数器，用于计算fps
         self.counter = 0
-        
+
         today = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()) # 今日日期，例如2024年5月6日则为20240506
         self.converter = Converter(self.global_my_color,converter_config_path)  # 传入的是path
         # 场地解算
         # converter.camera_to_field_init(capture)
         # self.converter_inted = False
-        
+
         # 加载转换器配置文件
         with open(converter_config_path, 'r', encoding='utf-8') as file:
             data_loader = yaml.safe_load(file)
-            
+
         # 读取激光雷达到相机外参
         # 构建旋转和平移矩阵，4*3的矩阵，前三列为旋转矩阵，第四列为平移矩阵
         self.R = np.array(data_loader['calib']['extrinsic']['R']['data']).reshape(
@@ -137,6 +137,8 @@ class Radar(Node):
         self.extrinsic_matrix_inv = np.linalg.inv(self.extrinsic_matrix)
         
         
+
+
         self.start_time = time.time()
         # fps计算
         N = 10
@@ -152,7 +154,7 @@ class Radar(Node):
         self.last_frameid = -1
         # 可视化去除地面后的点云
         self.pub_nognd = self.create_publisher(PointCloud2, "pcd_removed", qos__lidar_profile)
-        
+
         # 订阅实时icp传来的tf消息
         self.tf_buffer = Buffer()  # 创建 TF 缓冲区
         self.tf_listener = TransformListener(self.tf_buffer, self)  # 创建监听器
@@ -180,6 +182,8 @@ class Radar(Node):
             self.radar_to_field = np.ones((4, 4)) # 之后改为 np.eye(4)（单位阵），或者更优雅的做法：在全局保留上一次成功的矩阵 last_valid_tf
             self.get_logger().error(f"获取 TF 失败: {ex}")    
     
+            self.get_logger().error(f"获取 TF 失败: {ex}")    
+
     # 将 TF 转换为 4x4 齐次变换矩阵
     def tf_to_matrix(self, translation, rotation):
         # 四元数转旋转矩阵
@@ -199,7 +203,7 @@ class Radar(Node):
             [2*(x*y + z*w),     1 - 2*(x**2 + z**2), 2*(y*z - x*w)],
             [2*(x*z - y*w),     2*(y*z + x*w),     1 - 2*(x**2 + y**2)]
         ])
-    
+
     # 将相机坐标系下的点云转换到激光雷达坐标系
     def camera_to_lidar(self, pc):
         pc = np.hstack((pc, np.ones((pc.shape[0], 1)))) # 齐次化
@@ -273,11 +277,11 @@ class Radar(Node):
         pc = pc2.create_cloud(header, fields, field_pts)
         # pc = pc2.create_cloud(header, fields, filtered_points) -> 实际效果不好，所以实际输入的是field_pts
         self.pub_nognd.publish(pc)
-        
+
         # 可视化过滤后点云
         # o3d.visualization.draw_geometries([filtered_pcd])
         return filtered_pcd
-    
+
     # 雷达回调函数
     def radar_callback(self, msg):
         detect_results = msg.detect_results
@@ -314,7 +318,7 @@ class Radar(Node):
             # ⚠️ 注意：这也会导致 judge_messager 向裁判系统发送己方坐标，
             # 正式比赛前需恢复过滤或在 judge_messager 中屏蔽己方。
             is_null = (label == "NULL")
-            
+
             # 获取新xyxy_box , 原来是左上角和右下角，现在想要中心点保持不变，宽高设为原来的一半，再计算一个新的xyxy_box,可封装
             div_times = 1.01
             new_w = xywh_box[2] / div_times
@@ -322,7 +326,7 @@ class Radar(Node):
             new_xyxy_box = [xywh_box[0] - new_w / 2, xywh_box[1] - new_h / 2, xywh_box[0] + new_w / 2, xywh_box[1] + new_h / 2]
             # 获取检测框内numpy格式pc
             box_pc = self.converter.get_points_in_box(pcd_fixed.points, new_xyxy_box)
-            
+
             # 如果没有获取到点，直接continue
             if len(box_pc) == 0:
                 self.get_logger().info("box_pc is None")
@@ -378,12 +382,12 @@ class Radar(Node):
         enemy_car_infos = []
         # result in results:[car_id , center_xy , camera_xyz , field_xyz]
         # 如果是我方车辆，找到所有敌方车辆，计算与每一台敌方车辆距离，并在图像两车辆中心点之间画线，线上写距离
-        
+
         allLocation = Locations()
-        
+
         for all_info in all_infos:
             track_id , car_id , center_xy , camera_xyz , field_xyz , color , is_valid = all_info
-            
+
             # 将信息分两个列表存储
             if color == self.global_my_color:
                 if track_id == -1:
@@ -401,7 +405,7 @@ class Radar(Node):
             else:
                 enemy_car_infos.append(all_info)
                 # print(car_id,field_xyz,color)
-                
+
                 if track_id != -1:
                     # print("car",car_id,field_xyz,color)
                     # 将每个检测结果添加到列表中，增加frame_id作为每一帧的ID
@@ -428,10 +432,10 @@ class Radar(Node):
 
 
 
-            
-            
-            
-                
+
+
+
+
 
 
         # self.get_logger().info('I heard: "%s"' % msg)
