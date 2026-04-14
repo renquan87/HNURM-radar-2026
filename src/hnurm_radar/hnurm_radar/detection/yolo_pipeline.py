@@ -28,61 +28,58 @@ yolo_pipeline.py — 三阶段 YOLO 推理引擎
 import math
 import cv2
 
-# ---------- TensorRT 10 兼容性 Monkey-Patch (完整版) ----------
+# ---------- TensorRT 10 兼容性 Monkey-Patch (最终版) ----------
 import tensorrt as trt
 
 if not hasattr(trt.ICudaEngine, 'num_bindings'):
     # ---- ICudaEngine 补丁 ----
-    # 1. num_bindings → num_io_tensors
     trt.ICudaEngine.num_bindings = property(lambda self: self.num_io_tensors)
 
-    # 2. binding_is_input → get_tensor_mode
     def engine_binding_is_input(self, index):
         name = self.get_tensor_name(index)
         return self.get_tensor_mode(name) == trt.TensorIOMode.INPUT
-
     trt.ICudaEngine.binding_is_input = engine_binding_is_input
 
-    # 3. get_binding_index → get_tensor_index
     def engine_get_binding_index(self, name):
-        return self.get_tensor_index(name)
-
+        # 遍历所有绑定的名称来查找索引
+        for i in range(self.num_bindings):
+            if self.get_binding_name(i) == name:
+                return i
+        return -1
     trt.ICudaEngine.get_binding_index = engine_get_binding_index
 
-    # 4. get_binding_name → get_tensor_name
     def engine_get_binding_name(self, index):
         return self.get_tensor_name(index)
-
     trt.ICudaEngine.get_binding_name = engine_get_binding_name
 
-    # 5. get_binding_shape → get_tensor_shape
     def engine_get_binding_shape(self, index):
         name = self.get_tensor_name(index)
         return self.get_tensor_shape(name)
-
     trt.ICudaEngine.get_binding_shape = engine_get_binding_shape
 
-    # 6. get_binding_dtype → get_tensor_dtype
     def engine_get_binding_dtype(self, index):
         name = self.get_tensor_name(index)
         return self.get_tensor_dtype(name)
-
     trt.ICudaEngine.get_binding_dtype = engine_get_binding_dtype
+
+    def engine_get_profile_shape(self, profile_idx, binding_idx):
+        name = self.get_tensor_name(binding_idx)
+        return self.get_tensor_profile_shape(name, profile_idx)
+    trt.ICudaEngine.get_profile_shape = engine_get_profile_shape
 
     # ---- IExecutionContext 补丁 ----
     if hasattr(trt, 'IExecutionContext'):
         def context_get_binding_shape(self, index):
             name = self.engine.get_tensor_name(index)
             return self.get_tensor_shape(name)
+        trt.IExecutionContext.get_binding_shape = context_get_binding_shape
 
         def context_set_binding_shape(self, index, shape):
             name = self.engine.get_tensor_name(index)
             return self.set_input_shape(name, shape)
-
-        trt.IExecutionContext.get_binding_shape = context_get_binding_shape
         trt.IExecutionContext.set_binding_shape = context_set_binding_shape
 
-    print("[MonkeyPatch] 已为 TensorRT 10 注入完整旧版 API 兼容层")
+    print("[MonkeyPatch] 已为 TensorRT 10 注入完整旧版 API 兼容层（修复 get_binding_index）")
 # ----------------------------------------------------------------
 
 from .label_mappings import (
@@ -373,7 +370,7 @@ class YoloPipeline:
             xyxy_box = [x_left, y_left, x_right, y_right]
             draw_candidate.append(
                 [track_id, x_left, y_left, x_right, y_right, label])
-            zip_results.append([xyxy_box, xywh_box, track_id, label])
+            zip_results.append([xyxy_box, xywh_box, track_id, label,conf])
             self.id_candidate[track_id] = index
             index += 1
 

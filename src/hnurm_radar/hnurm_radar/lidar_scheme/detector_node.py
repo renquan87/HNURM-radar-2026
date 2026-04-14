@@ -112,7 +112,6 @@ class HomographyTransformer:
             if (map_x < -margin or map_x > self.calib_map_w + margin or
                 map_y < -margin or map_y > self.calib_map_h + margin):
                 return None
-        # 高地层检测（简化，完整逻辑参照 camera_detector）
         if self.mask_img is not None and self.H_highland is not None:
             mask_h, mask_w = self.mask_img.shape[:2]
             mx = int(map_x * mask_w / self.calib_map_w)
@@ -144,7 +143,7 @@ class Detector(Node):
         self.my_color = main_cfg['global']['my_color']
         self.is_debug = main_cfg['global']['is_debug']
 
-        # ---------- 初始化 YoloPipeline（原有推理管线） ----------
+        # ---------- 初始化 YoloPipeline ----------
         self.pipeline = YoloPipeline(
             det_cfg=self.cfg,
             resolve_fn=resolve_path,
@@ -155,7 +154,7 @@ class Detector(Node):
         # ---------- 透视变换器 ----------
         self.homography = HomographyTransformer(self.get_logger(), self.my_color)
 
-        # ---------- 匈牙利跟踪器（来自 camera_detector） ----------
+        # ---------- 匈牙利跟踪器 ----------
         track_params = self.cfg.get('track', {})
         self.hungarian = HungarianTracker(
             iou_thr=float(track_params.get('iou_thr', 0.05)),
@@ -341,9 +340,14 @@ class Detector(Node):
                 detections = []
                 if results is not None:
                     for res in results:
-                        xyxy, xywh, track_id, label = res
+                        # 注意：yolo_pipeline 返回五元组 [xyxy, xywh, track_id, label, conf]
+                        if len(res) == 5:
+                            xyxy, xywh, track_id, label, conf = res
+                        else:   # 兼容旧版（无 conf）
+                            xyxy, xywh, track_id, label = res
+                            conf = 1.0
                         detections.append(SingleDetectionResult(
-                            xyxy=xyxy, xywh=xywh, label=label, conf=1.0, track_id=track_id
+                            xyxy=xyxy, xywh=xywh, label=label, conf=conf, track_id=track_id
                         ))
 
                 # 匈牙利跟踪器更新
@@ -371,6 +375,7 @@ class Detector(Node):
                     msg.xywh_box = [float(orig_cx), float(orig_cy), float(orig_w_box), float(orig_h_box)]
                     msg.track_id = robot.id
                     msg.label = best_label
+                    msg.confidence = float(robot.vote_pool.get(best_label, 0.0))
 
                     # 单目3D坐标
                     px = orig_cx
