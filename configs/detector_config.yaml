@@ -13,16 +13,16 @@ params:
   life_time: 90                       # 生命周期
   # 灰色装甲板亮度阈值（用于 Stage3 灰色判定）
   gray_threshold:
-    blue: 35                          # 蓝方灰色阈值
-    red: 15                           # 红方灰色阈值
-    stage3: 30                        # Stage3 通用阈值
+    blue: 15                          # 蓝方灰色阈值 # 35
+    red: 15                           # 红方灰色阈值 # 15
+    stage3: 15                        # Stage3 通用阈值 # 30
 
 # 推理/显示分辨率（detector_node 和 camera_detector 共用）
 resolution:
-  infer_width: 1920                   # 推理输入宽度
-  infer_height: 1080                  # 推理输入高度
-  display_width: 1920                 # 检测结果显示宽度
-  display_height: 1080                # 检测结果显示高度
+  infer_width: 1536                   # 推理输入宽度 # 1920
+  infer_height: 1125                  # 推理输入高度 # 1080
+  display_width: 1536                 # 检测结果显示宽度
+  display_height: 1125                # 检测结果显示高度
 
 # 坐标卡尔曼滤波器参数
 filter:

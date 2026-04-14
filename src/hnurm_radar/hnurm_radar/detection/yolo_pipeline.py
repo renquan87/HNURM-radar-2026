@@ -261,9 +261,11 @@ class YoloPipeline:
                         self.Track_value[int(track_id)][i] / 10)
 
             x, y, w, h = box
-            x_left = x - w / 2
-            y_left = y - h / 2
-            roi = frame[int(y_left):int(y_left + h), int(x_left):int(x_left + w)]
+            x_left = max(0, int(x - w / 2))
+            y_left = max(0, int(y - h / 2))
+            x_right = min(frame.shape[1], int(x + w / 2))
+            y_right = min(frame.shape[0], int(y + h / 2))
+            roi = frame[y_left:y_right, x_left:x_right]
             # 边界检查：防止空 ROI
             if roi.size == 0:
                 continue
@@ -355,10 +357,10 @@ class YoloPipeline:
             else:
                 label = "NULL"
 
-            x_left = int(x - w / 2)
-            y_left = int(y - h / 2)
-            x_right = int(x + w / 2)
-            y_right = int(y + h / 2)
+            x_left = max(0, int(x - w / 2))
+            y_left = max(0, int(y - h / 2))
+            x_right = min(frame.shape[1], int(x + w / 2))
+            y_right = min(frame.shape[0], int(y + h / 2))
             xywh_box = [x, y, w, h]
             xyxy_box = [x_left, y_left, x_right, y_right]
             draw_candidate.append(
