@@ -296,7 +296,7 @@ class DynamicCloudNode(Node):
         self.other_accumulated_clouds.append(other_lidar)
 
         # 合并累积点云
-        acc_dynamic = np.vstack(self.accumulated_clouds) if self.accumulated_clouds else np.empty((0, 2))
+        acc_dynamic = np.vstack(self.accumulated_clouds) if self.accumulated_clouds else np.empty((0, 1))
         acc_other = np.vstack(self.other_accumulated_clouds) if self.other_accumulated_clouds else np.empty((0, 3))
 
         # 7. 发布结果（雷达坐标系）

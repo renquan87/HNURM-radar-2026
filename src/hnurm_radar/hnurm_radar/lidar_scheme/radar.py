@@ -1,22 +1,18 @@
+#!/usr/bin/env python3
 """
-radar.py — 激光雷达方案的融合定位节点（方案二）
+radar.py — 三轨并行融合定位节点（含空间去重 + TDT风格视觉身份融合）
+====================================================================
+轨道1：视觉轨迹 → 单目3D坐标驱动，独立KF跟踪
+轨道2：点云轨迹 → LiDAR簇中心驱动，独立KF跟踪（含TDT camera_match身份融合）
+轨道3：融合轨迹 → 视觉框+点云簇匹配生成，沿用 FixedSlotTracker
 
-功能：
-  订阅 detector_node 发布的 2D 检测结果（detect_result）和 lidar_node 发布的
-  背景减除点云（target_pointcloud），通过先聚类后投影+匈牙利匹配获取目标的三维位置，
-  再通过 TF 变换将坐标从激光雷达坐标系转换到赛场坐标系，最终发布到 /location 话题。
+三轨输出经空间聚类去重后合并发布，消除分身，提升定位稳定性。
 
-数据流：
-  detect_result (Robots)  ──┐
-                            ├→ radar_callback() → 点云聚类 → 匹配 → 坐标变换 → /location (Locations)
-  target_pointcloud (PointCloud2) ─┘
-  TF (livox → map)        ──→ on_timer() 定时查询
-
-配置文件：
-  - configs/main_config.yaml      — 全局颜色、调试开关
-  - configs/converter_config.yaml — 外参 R/T、内参 K、畸变系数
-  - configs/detector_config.yaml  — 类别标签列表、卡尔曼参数等
+调试开关：
+  - debug_publish_all : 若为 True，发布所有有身份的轨迹（含己方普通车辆）
+  - publish_aux_tracks: 若为 True，额外发布原始视觉/点云辅助轨迹（以 NULL 身份）
 """
+
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String, Bool
@@ -44,9 +40,7 @@ from std_msgs.msg import Header
 from ..Car.Car import CarList
 from ..shared.paths import MAIN_CONFIG_PATH, CONVERTER_CONFIG_PATH, DETECTOR_CONFIG_PATH
 from ..Lidar.Converter import Converter
-from .tracker_enhanced import FixedSlotTracker
-
-# 为 rosbag 模式导入压缩图像消息类型
+from .tracker_enhanced import FixedSlotTracker, VisualTracker, LidarTracker
 from sensor_msgs.msg import CompressedImage
 
 
@@ -137,6 +131,7 @@ class Radar(Node):
             friend_ids = [101, 102, 103, 104, 105, 106, 107]
         all_track_ids = enemy_ids + friend_ids
 
+        # 原有融合追踪器
         self.tracker = FixedSlotTracker(
             enemy_car_ids=all_track_ids,
             class_num=len(self.labels),
@@ -149,15 +144,25 @@ class Radar(Node):
             max_velocity=kf_max_velocity
         )
 
+        # ===== 新增：视觉与点云独立追踪器 =====
+        self.visual_tracker = VisualTracker(max_distance=1.0, max_lost=5, min_hits=3)
+        self.lidar_tracker = LidarTracker(max_distance=1.0, max_lost=5, min_hits=3)
+
+        # ===== 调试开关 =====
+        self.debug_publish_all = True   # 若为 True，发布所有有身份的轨迹（包括己方普通车辆）
+        self.publish_aux_tracks = False # 若为 True，额外发布原始视觉/点云辅助轨迹
+
         self.MATCH_THRESHOLD = 0.6
         self.MIN_BOX_DIST_PX = 1000
         self.MIN_CLUSTER_POINTS_FOR_SPLIT = 20
 
-        # ---------- 预筛选参数 ----------
+        # 预筛选参数
         self.lat_base = 1.5
         self.lat_scale = 0.03
         self.lon_base = 2.0
         self.lon_scale = 0.1
+
+        self.last_time = time.time()
 
     def _compressed_image_callback(self, msg):
         pass
@@ -271,7 +276,8 @@ class Radar(Node):
         allLocation = Locations()
         for all_info in all_infos:
             track_id, car_id, center_xy, camera_xyz, field_xyz, color, is_valid = all_info
-            if color != self.global_my_color and track_id != -1:
+            # 调试模式：若 debug_publish_all=True 则发布所有，否则仅发布敌方
+            if (self.debug_publish_all or color != self.global_my_color) and track_id != -1:
                 loc = Location()
                 loc.x = float(field_xyz[0])
                 loc.y = float(field_xyz[1])
@@ -289,15 +295,9 @@ class Radar(Node):
             allLocation.locs.append(loc)
         self.pub_location.publish(allLocation)
 
-    # ---------- 新增：单目3D预筛选 ----------
     def _filter_clusters_by_mono(self, mono_pos, cluster_centers_lidar):
-        """
-        根据单目3D坐标筛选候选簇索引
-        mono_pos: (x, y, z) 或 None
-        返回候选簇索引列表
-        """
         if mono_pos is None:
-            return None  # 表示不筛选
+            return None
         depth = abs(mono_pos[1])
         lat_th = self.lat_base + self.lat_scale * depth
         lon_th = self.lon_base + self.lon_scale * depth
@@ -309,198 +309,237 @@ class Radar(Node):
                 candidates.append(i)
         return candidates
 
-    # ---------- 核心回调（修改代价矩阵部分） ----------
+    # ---------- 核心回调（三轨并行 + 空间去重输出） ----------
     def radar_callback(self, msg):
         detect_results = msg.detect_results
         if self.lidar_points is None:
             return
 
-        clusters = self.cluster_points_dbscan(self.lidar_points, eps=0.15, min_samples=7)
-        if not clusters:
-            tracked_results = self.tracker.update([], time.time())
-            self.carList_results.clear()
-            null_robot_locations = []
-            for car_id, pos in tracked_results:
-                if car_id > 0:
-                    self.carList_results.append([car_id, car_id, [0,0,0,0], 1, [0,0,0], pos])
-                elif car_id == 0:
-                    null_robot_locations.append(pos)
-            self._publish_through_carlist(null_robot_locations)
-            return
+        current_time = time.time()
+        dt = max(0.01, min(0.2, current_time - self.last_time))
+        self.last_time = current_time
 
+        # ===== 1. 点云聚类与特征提取 =====
+        clusters = self.cluster_points_dbscan(self.lidar_points, eps=0.15, min_samples=7)
         cluster_features = []
         cluster_raw_points = []
-        for cluster_pts in clusters:
-            feat = self.compute_cluster_features(cluster_pts)
-            if feat is not None:
-                cluster_features.append(feat)
-                cluster_raw_points.append(cluster_pts)
-        if not cluster_features:
-            return
+        if clusters:
+            for pts in clusters:
+                feat = self.compute_cluster_features(pts)
+                if feat:
+                    cluster_features.append(feat)
+                    cluster_raw_points.append(pts)
 
-        n_clusters = len(cluster_features)
-        n_boxes = len(detect_results)
-        if n_boxes == 0:
-            observations = []
-            for feat in cluster_features:
-                center_h = np.append(feat['center_lidar'], 1.0)
-                field_xyz = np.dot(self.radar_to_field, center_h)[:3]
-                observations.append((0, field_xyz, False, -1, 0.0))
-            tracked_results = self.tracker.update(observations, time.time())
-            self.carList_results.clear()
-            null_robot_locations = []
-            for car_id, pos in tracked_results:
-                if car_id > 0:
-                    self.carList_results.append([car_id, car_id, [0,0,0,0], 1, [0,0,0], pos])
-                elif car_id == 0:
-                    null_robot_locations.append(pos)
-            self._publish_through_carlist(null_robot_locations)
-            return
+        # ===== 2. 视觉检测解析（单目3D，增加颜色/编号用于C++身份融合） =====
+        visual_dets = []          # (x, y, label, conf)  给 VisualTracker
+        visual_for_lidar = []     # (x, y, color, number, timestamp)  给 LidarTracker 身份融合
 
-        # ========== 优化1&2&3：向量化代价矩阵 + 单目预筛选 + 仅用中心距离 ==========
-        # 提取数据为 NumPy 数组
-        cluster_centers_pixel = np.array([f['center_pixel'] for f in cluster_features])  # (N,2)
-        cluster_centers_lidar = [f['center_lidar'] for f in cluster_features]
-
-        box_centers = np.array([[d.xywh_box[0], d.xywh_box[1]] for d in detect_results])  # (M,2)
-        box_sizes = np.array([[d.xywh_box[2], d.xywh_box[3]] for d in detect_results])    # (M,2)
-        diag = np.sqrt(box_sizes[:,0]**2 + box_sizes[:,1]**2)  # (M,)
-
-        # 单目坐标列表
-        mono_positions = []
         for det in detect_results:
             if 0 < det.field_x < 28 and 0 < det.field_y < 15:
-                mono_positions.append(np.array([det.field_x, det.field_y, det.field_z]))
-            else:
-                mono_positions.append(None)
+                visual_dets.append((det.field_x, det.field_y, det.label, det.confidence))
 
-        INF_COST = 1e9
-        cost_matrix = np.full((n_clusters, n_boxes), INF_COST, dtype=np.float32)
+                # 解析颜色和编号（与C++一致：0=蓝，2=红，编号从0开始）
+                label = det.label
+                if label.startswith('R'):
+                    color = 2
+                    try:
+                        number = int(label[1:]) - 1  # R1→0, R7→6
+                    except:
+                        number = -1
+                elif label.startswith('B'):
+                    color = 0
+                    try:
+                        number = int(label[1:]) - 1  # B1→0, B7→6
+                    except:
+                        number = -1
+                else:
+                    color = 1
+                    number = -1
+                visual_for_lidar.append((det.field_x, det.field_y, color, number, current_time))
 
-        # 计算所有簇中心与所有框中心的像素距离 (N,M)
-        diff = cluster_centers_pixel[:, np.newaxis, :] - box_centers[np.newaxis, :, :]
-        dist_matrix = np.linalg.norm(diff, axis=2)   # (N,M)
+        # ===== 3. 纯点云坐标提取 =====
+        lidar_dets = []    # (x, y)
+        for feat in cluster_features:
+            center_h = np.append(feat['center_lidar'], 1.0)
+            fxyz = np.dot(self.radar_to_field, center_h)[:3]
+            lidar_dets.append((fxyz[0], fxyz[1]))
 
-        # 归一化距离代价
-        norm_dist = dist_matrix / (diag[np.newaxis, :] + 1e-6)
+        # ===== 4. 原有融合匹配（生成融合观测给 FixedSlotTracker） =====
+        observations = []   # 用于 FixedSlotTracker
+        if detect_results and cluster_features:
+            n_clusters = len(cluster_features)
+            n_boxes = len(detect_results)
+            cluster_centers_pixel = np.array([f['center_pixel'] for f in cluster_features])
+            cluster_centers_lidar = [f['center_lidar'] for f in cluster_features]
+            box_centers = np.array([[d.xywh_box[0], d.xywh_box[1]] for d in detect_results])
+            box_sizes = np.array([[d.xywh_box[2], d.xywh_box[3]] for d in detect_results])
+            diag = np.sqrt(box_sizes[:,0]**2 + box_sizes[:,1]**2)
 
-        # 基础代价 = 归一化距离
-        base_cost = norm_dist.copy()
+            mono_positions = []
+            for det in detect_results:
+                if 0 < det.field_x < 28 and 0 < det.field_y < 15:
+                    mono_positions.append(np.array([det.field_x, det.field_y, det.field_z]))
+                else:
+                    mono_positions.append(None)
 
-        # 应用预筛选：对于每个检测框，若簇不在候选集中，代价置为 INF
-        for j, mono_pos in enumerate(mono_positions):
-            candidates = self._filter_clusters_by_mono(mono_pos, cluster_centers_lidar)
-            if candidates is not None:
-                mask = np.ones(n_clusters, dtype=bool)
-                mask[candidates] = False
-                base_cost[mask, j] = INF_COST
+            INF_COST = 1e9
+            cost_matrix = np.full((n_clusters, n_boxes), INF_COST, dtype=np.float32)
+            diff = cluster_centers_pixel[:, np.newaxis, :] - box_centers[np.newaxis, :, :]
+            dist_matrix = np.linalg.norm(diff, axis=2)
+            norm_dist = dist_matrix / (diag[np.newaxis, :] + 1e-6)
+            base_cost = norm_dist.copy()
 
-        # 像素距离超过200的直接置 INF
-        base_cost[dist_matrix > 200] = INF_COST
+            for j, mono_pos in enumerate(mono_positions):
+                candidates = self._filter_clusters_by_mono(mono_pos, cluster_centers_lidar)
+                if candidates is not None:
+                    mask = np.ones(n_clusters, dtype=bool)
+                    mask[candidates] = False
+                    base_cost[mask, j] = INF_COST
+            base_cost[dist_matrix > 200] = INF_COST
+            cost_matrix = base_cost.astype(np.float32)
 
-        cost_matrix = base_cost.astype(np.float32)
-        # ========== 优化部分结束 ==========
+            row_ind, col_ind = linear_sum_assignment(cost_matrix)
+            matches = [(r, c) for r, c in zip(row_ind, col_ind) if cost_matrix[r, c] < INF_COST/2]
 
-        row_ind, col_ind = linear_sum_assignment(cost_matrix)
-        matches = []
-        for r, c in zip(row_ind, col_ind):
-            if cost_matrix[r, c] < INF_COST / 2:
-                matches.append((r, c))
+            matched_cluster_to_box = {}
+            matched_box_to_cluster = {}
+            for ci, di in matches:
+                matched_cluster_to_box[ci] = di
+                matched_box_to_cluster[di] = ci
 
-        matched_cluster_to_box = {}
-        matched_box_to_cluster = {}
-        for cluster_idx, det_idx in matches:
-            matched_cluster_to_box[cluster_idx] = det_idx
-            matched_box_to_cluster[det_idx] = cluster_idx
-
-        extra_matches = {i: [] for i in matched_cluster_to_box.keys()}
-        if n_boxes > 0:
+            extra_matches = {i: [] for i in matched_cluster_to_box.keys()}
             unmatched_boxes = [j for j in range(n_boxes) if j not in matched_box_to_cluster]
             for j in unmatched_boxes:
-                best_cluster = None
-                best_cost = INF_COST
+                best_cluster, best_cost = None, INF_COST
                 for i in matched_cluster_to_box.keys():
                     if cost_matrix[i, j] < self.MATCH_THRESHOLD:
-                        existing_box_idx = matched_cluster_to_box[i]
-                        existing_box = detect_results[existing_box_idx]
+                        existing_box = detect_results[matched_cluster_to_box[i]]
                         cur_box = detect_results[j]
                         dist_centers = np.linalg.norm(np.array(existing_box.xywh_box[:2]) - np.array(cur_box.xywh_box[:2]))
                         if dist_centers < self.MIN_BOX_DIST_PX:
                             continue
                         if cost_matrix[i, j] < best_cost:
-                            best_cost = cost_matrix[i, j]
-                            best_cluster = i
+                            best_cost, best_cluster = cost_matrix[i, j], i
                 if best_cluster is not None:
                     extra_matches[best_cluster].append(j)
 
-        final_cluster_to_boxes = {}
-        for i in matched_cluster_to_box.keys():
-            boxes = [matched_cluster_to_box[i]] + extra_matches[i]
-            final_cluster_to_boxes[i] = boxes
+            final_cluster_to_boxes = {i: [matched_cluster_to_box[i]] + extra_matches[i] for i in matched_cluster_to_box}
+            all_matched_clusters = set(final_cluster_to_boxes.keys())
 
-        observations = []
-        all_matched_clusters = set(final_cluster_to_boxes.keys())
-
-        # 以下观测生成部分保持不变
-        for cluster_idx, box_indices in final_cluster_to_boxes.items():
-            if len(box_indices) == 1:
-                det = detect_results[box_indices[0]]
-                label = det.label
-                if label == "NULL":
-                    car_id = 0
-                    class_label = -1
-                    confidence = 0.0
-                else:
-                    car_id = self.carList.get_car_id(label)
-                    try:
-                        class_label = self.labels.index(label)
-                    except ValueError:
-                        class_label = -1
-                    confidence = det.confidence
-                feat = cluster_features[cluster_idx]
-                center_h = np.append(feat['center_lidar'], 1.0)
-                field_xyz = np.dot(self.radar_to_field, center_h)[:3]
-                observations.append((car_id, field_xyz, True, class_label, confidence))
-            else:
-                cluster_pts = cluster_raw_points[cluster_idx]
-                matched_boxes = [detect_results[j] for j in box_indices]
-                sub_features = self.split_cluster_with_kmeans(cluster_pts, matched_boxes)
-                for sub_feat in sub_features:
-                    det = sub_feat['matched_box']
+            for ci, box_indices in final_cluster_to_boxes.items():
+                if len(box_indices) == 1:
+                    det = detect_results[box_indices[0]]
                     label = det.label
-                    if label == "NULL":
-                        car_id = 0
-                        class_label = -1
-                        confidence = 0.0
-                    else:
+                    if label != "NULL":
                         car_id = self.carList.get_car_id(label)
                         try:
                             class_label = self.labels.index(label)
                         except ValueError:
                             class_label = -1
-                        confidence = det.confidence
-                    center_h = np.append(sub_feat['center_lidar'], 1.0)
-                    field_xyz = np.dot(self.radar_to_field, center_h)[:3]
-                    observations.append((car_id, field_xyz, True, class_label, confidence))
+                        conf = det.confidence
+                        feat = cluster_features[ci]
+                        center_h = np.append(feat['center_lidar'], 1.0)
+                        fxyz = np.dot(self.radar_to_field, center_h)[:3]
+                        observations.append((car_id, fxyz, True, class_label, conf))
+                else:
+                    cluster_pts = cluster_raw_points[ci]
+                    matched_boxes = [detect_results[j] for j in box_indices]
+                    sub_features = self.split_cluster_with_kmeans(cluster_pts, matched_boxes)
+                    for sub_feat in sub_features:
+                        det = sub_feat['matched_box']
+                        label = det.label
+                        if label != "NULL":
+                            car_id = self.carList.get_car_id(label)
+                            try:
+                                class_label = self.labels.index(label)
+                            except ValueError:
+                                class_label = -1
+                            conf = det.confidence
+                            center_h = np.append(sub_feat['center_lidar'], 1.0)
+                            fxyz = np.dot(self.radar_to_field, center_h)[:3]
+                            observations.append((car_id, fxyz, True, class_label, conf))
 
-        for i in range(n_clusters):
-            if i not in all_matched_clusters:
-                feat = cluster_features[i]
-                center_h = np.append(feat['center_lidar'], 1.0)
-                field_xyz = np.dot(self.radar_to_field, center_h)[:3]
-                observations.append((0, field_xyz, False, -1, 0.0))
+        # ===== 5. 更新三个追踪器 =====
+        self.visual_tracker.update(visual_dets, dt)
+        self.lidar_tracker.update(lidar_dets, current_time, visual_for_lidar)  # 传入视觉观测用于身份融合
+        tracked_fusion = self.tracker.update(observations, current_time)
 
-        current_time = time.time()
-        tracked_results = self.tracker.update(observations, current_time)
-
+        # ===== 6. 三轨融合去重输出 =====
         self.carList_results.clear()
         null_robot_locations = []
-        for car_id, pos in tracked_results:
-            if car_id > 0:
-                self.carList_results.append([car_id, car_id, [0,0,0,0], 1, [0,0,0], pos])
-            elif car_id == 0:
-                null_robot_locations.append(pos)
 
+        # ---------- 收集所有确认轨迹 ----------
+        all_tracks = []  # 每项: [x, y, label, car_id, confidence, src]
+
+        # 视觉轨迹 (置信度0.80)
+        for tid, x, y, label, src in self.visual_tracker.get_confirmed_tracks():
+            car_id = self.carList.get_car_id(label) if label != "NULL" else 0
+            all_tracks.append([x, y, label, car_id, 0.7, 'VISUAL'])
+
+        # 点云轨迹 (置信度0.70) —— 注意：新版返回七元组，我们只取前五个
+        for item in self.lidar_tracker.get_confirmed_tracks():
+            tid, x, y, label, src = item[:5]
+            car_id = self.carList.get_car_id(label) if label != "NULL" else 0
+            all_tracks.append([x, y, label, car_id, 0.80, 'LIDAR'])
+
+        # 融合轨迹 (置信度0.95)
+        for car_id, pos in tracked_fusion:
+            label = "NULL"
+            for slot in self.tracker.slots:
+                if slot.car_id == car_id and slot.has_ever_matched:
+                    best_class = np.argmax(slot.class_dist)
+                    if best_class < len(self.labels):
+                        label = self.labels[best_class]
+                    break
+            all_tracks.append([pos[0], pos[1], label, car_id, 0.85, 'FUSION'])
+
+        # ---------- 空间聚类去重 (距离阈值1.2米) ----------
+        fused_tracks = []
+        used = set()
+        threshold = 1.2
+
+        for i in range(len(all_tracks)):
+            if i in used:
+                continue
+            best = all_tracks[i]
+            cluster_indices = [i]
+            for j in range(i + 1, len(all_tracks)):
+                if j in used:
+                    continue
+                dist = np.hypot(all_tracks[i][0] - all_tracks[j][0],
+                                all_tracks[i][1] - all_tracks[j][1])
+                if dist < threshold:
+                    cluster_indices.append(j)
+                    if all_tracks[j][4] > best[4]:
+                        best = all_tracks[j]
+            for idx in cluster_indices:
+                used.add(idx)
+            fused_tracks.append(best)
+
+        # ---------- 输出融合后的轨迹 ----------
+        for track in fused_tracks:
+            x, y, label, car_id, conf, src = track
+
+            is_enemy = (self.global_my_color == "Red" and car_id >= 100) or \
+                       (self.global_my_color == "Blue" and car_id < 100 and car_id != -1)
+            is_my_7 = (self.global_my_color == "Red" and car_id == 7) or \
+                      (self.global_my_color == "Blue" and car_id == 107)
+
+            # 调试模式：若 debug_publish_all=True，发布所有有身份的轨迹；否则仅敌方及己方7号
+            if car_id > 0 and (self.debug_publish_all or is_enemy or is_my_7):
+                self.carList_results.append([car_id, car_id, [0,0,0,0], 1, [0,0,0], [x, y, 0.0]])
+            else:
+                null_robot_locations.append([x, y, 0.0])
+
+        # ---------- 调试模式：额外发布原始辅助轨迹 ----------
+        if self.publish_aux_tracks:
+            for tid, x, y, label, src in self.visual_tracker.get_confirmed_tracks():
+                null_robot_locations.append([x, y, 0.0])
+            for item in self.lidar_tracker.get_confirmed_tracks():
+                tid, x, y, label, src = item[:5]
+                null_robot_locations.append([x, y, 0.0])
+
+        # 发布
         self._publish_through_carlist(null_robot_locations)
 
     def __del__(self):
