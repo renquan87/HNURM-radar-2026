@@ -41,11 +41,8 @@ class BBoxKalmanFilter(object):
             self.F_k[i, self.m + i] = 1.0
 
         # 预测阻尼：平移速度弱阻尼、尺度速度强阻尼，用于抑制异常外推。
-        self.vel_damping_xy = 0.96   # vx, vy — 提高保留率，减少高速移动时预测速度滞后
-        self.vel_damping_wh = 0.90    # vw, vh
-        # # 原始参数
-        # self.vel_damping_xy = 0.95   # vx, vy
-        # self.vel_damping_wh = 0.90    # vw, vh
+        self.vel_damping_xy = 0.94
+        self.vel_damping_wh = 0.92
 
         self.F_k[4, 4] = self.vel_damping_xy
         self.F_k[5, 5] = self.vel_damping_xy
@@ -70,16 +67,43 @@ class BBoxKalmanFilter(object):
 
         # 1. 过程噪声基准权重 (Q): 反映系统动态模型的信任程度，数值远小于R以确保对预测的及时响应。
         self._q_weight_pos = 1.0 / 10000    
-        self._q_weight_vel = 1.0 / 80      
+        self._q_weight_vel = 1.0 / 15       # 速度过程噪声，大幅增大以加速速度状态收敛
+        # # 上一版参数
+        # self._q_weight_vel = 1.0 / 40
+        # # 原始参数
+        # self._q_weight_vel = 1.0 / 80
         self._q_weight_scale = 1.0 / 20000
 
 
         # 2. 观测噪声基准权重 (R): 保持对观测值的适度信任，构建低通屏障
-        self._r_weight_pos = 1.0 / 150     # 中心点位置的观测噪声权重 — 降低R，增强对观测的信任，减少高速移动时滤波滞后
+        self._r_weight_pos = 1.0 / 800     # 大幅降低 R，使 K 从 0.15 提升至 0.5 附近
+        # # 上一版参数
+        # self._r_weight_pos = 1.0 / 200
         self._r_weight_scale = 1.0 / 200    # 尺度的观测噪声权重
         # # 原始参数
         # self._r_weight_pos = 1.0 / 100      # 中心点位置的观测噪声权重 (量级远大于Q)
         # self._r_weight_scale = 1.0 / 200    # 尺度的观测噪声权重
+
+        # 3. AKF 自适应参数
+        self._akf_innov_thr = 0.08
+        self._akf_alpha_max = 8.0
+        self._akf_r_gain = 0.7
+
+        # 4. AKF predict 侧：速度自适应过程噪声
+        self._akf_vel_boost_thr = 18.0
+        self._akf_vel_boost_max = 5.0
+
+        # 5. 速度直注入
+        self._vel_inject_gain = 0.22
+        self._vel_inject_deadzone = 0.03
+        self._vel_inject_max = 140.0
+        self._vel_inject_norm_max = 0.7   # 新增：残差过大时禁止注入，防误关联飞框
+
+        # 6. 预测速度钳位
+        self._predict_speed_max = 220.0   # 新增：纯预测阶段速度上限(px/s)
+
+        # 调试开关：输出 predict/update 关键指标
+        self._debug = True
         
         
 
@@ -159,6 +183,15 @@ class BBoxKalmanFilter(object):
         ]
         Q_k = np.diag(np.square(np.r_[std_pos, std_vel]))
 
+        # ── AKF predict: 速度自适应过程噪声 ──
+        # 高速运动时放大 Q_vel，使 P_vel 更大，下一帧 update 时 K_vel 增大，速度学习更快
+        speed = float(np.sqrt(x[4]**2 + x[5]**2))
+        vel_boost = max(1.0, speed / self._akf_vel_boost_thr)
+        vel_boost = min(vel_boost, self._akf_vel_boost_max)
+        if vel_boost > 1.0:
+            Q_k[4, 4] *= vel_boost      # vx 过程噪声放大
+            Q_k[5, 5] *= vel_boost      # vy 过程噪声放大
+
         # 预测状态方程
         # X_k = F_k * X_k-1
         x_pred = np.dot(self.F_k, x)
@@ -167,25 +200,39 @@ class BBoxKalmanFilter(object):
         # P_k = F_k * P_k-1 * F_k^T + Q_k
         P_current = np.dot(self.F_k, np.dot(P_result, self.F_k.T)) + Q_k
 
+        # ── [debug] predict 诊断输出 ──
+        if self._debug:
+            speed_before = float(np.sqrt(x[4]**2 + x[5]**2))
+            speed_after = float(np.sqrt(x_pred[4]**2 + x_pred[5]**2))
+            if speed_before > 5.0:
+                print(f"[BBoxKF predict] "
+                      f"pos=({x_pred[0]:.1f},{x_pred[1]:.1f}) "
+                      f"vel=({x_pred[4]:.1f},{x_pred[5]:.1f}) "
+                      f"speed={speed_before:.1f}->{speed_after:.1f} "
+                      f"damping={self.vel_damping_xy} "
+                      f"vel_boost={vel_boost:.2f}")
+
         return x_pred, P_current
 
-    def update(self, x: np.ndarray, P_current: np.ndarray, z: np.ndarray):
+    def update(self, x: np.ndarray, P_current: np.ndarray, z: np.ndarray, dt: float = 0.033):
         """
         观测更新步。结合 YOLO 实际测量值纠正预测状态。
+        引入 AKF 自适应机制与速度直注入，解决隐状态速度学习慢的结构性问题。
         参数:
             x: 预测状态向量 (X_k)
             P_current: 预测协方差矩阵 (P_k)
             z: 当前时刻 YOLO 传感器读数 [cx, cy, w, h]
+            dt: 真实时间步长 (秒)，用于速度直注入
         返回:
             x_new: 更新后的状态向量
             P_result: 更新后的协方差矩阵
-            innovation: [debug] 残差 (z - Hx) 用于量化分析
         """
+        
 
         # 依据当前观测值计算尺度因子
         sf = self._get_adaptive_sf(z[2], z[3])
 
-        # R_k: 传感器测量噪声协方差矩阵 (动态计算)
+        # R_k: 基线传感器测量噪声协方差矩阵
         std = [
             self._r_weight_pos * z[2] * sf,
             self._r_weight_pos * z[3] * sf,
@@ -194,50 +241,87 @@ class BBoxKalmanFilter(object):
         ]
         R_k = np.diag(np.square(std))
 
-        # 预估测量值向量
-        zz_k = np.dot(self.H_k, x)
+        # ── AKF: 基于归一化像素残差的自适应噪声调节 ──
+        # Step 1: 计算残差
+        innovation = z - np.dot(self.H_k, x)
+
+         # 调试用：预测中心与观测中心的欧氏距离
+        dist = float(np.linalg.norm(x[:2] - z[:2]))
 
 
-        # S_k: 创新协方差矩阵 (系统残差的协方差)
-        # S_k = H_k * P_k * H_k^T + R_k
-        S_k = np.dot(self.H_k, np.dot(P_current, self.H_k.T)) + R_k
+        # Step 2: 归一化像素残差（除以框对角线，消除尺度影响）
+        innov_pos = innovation[:2]
+        diag = np.sqrt(z[2]**2 + z[3]**2) + 1e-5
+        norm_innov = float(np.sqrt(innov_pos[0]**2 + innov_pos[1]**2)) / diag
+
+        # Step 3: 自适应因子，归一化残差超出阈值时启动
+        alpha = max(1.0, norm_innov / self._akf_innov_thr)
+        alpha = min(alpha, self._akf_alpha_max)
+
+        # Step 4: 膨胀先验协方差 + 收缩位置观测噪声
+        P_adapted = P_current.copy()
+        R_adapted = R_k.copy()
+        if alpha > 1.0:
+            P_adapted[:2, :2] *= alpha          # 位置协方差膨胀
+            P_adapted[4:6, 4:6] *= alpha        # 速度协方差同步膨胀
+            r_scale = 1.0 / (1.0 + (alpha - 1.0) * self._akf_r_gain)
+            R_adapted[0, 0] *= r_scale          # cx 观测噪声收缩
+            R_adapted[1, 1] *= r_scale          # cy 观测噪声收缩
+
+        # ── 标准 KF 更新 (使用自适应后的矩阵) ──
+        # S_k: 创新协方差矩阵
+        # S_k = H_k * P_adapted * H_k^T + R_adapted
+        S_k = np.dot(self.H_k, np.dot(P_adapted, self.H_k.T)) + R_adapted
 
         # 卡尔曼增益: K_k
-        K_k = np.dot(np.dot(P_current, self.H_k.T), np.linalg.inv(S_k))
+        K_k = np.dot(np.dot(P_adapted, self.H_k.T), np.linalg.inv(S_k))
 
         # 最优预测状态向量值
-        # X^_k = X_k + K_k * (z_k - zz_k) 
-        x_new = x + np.dot(K_k, (z - zz_k))
+        # X^_k = X_k + K_k * innovation
+        x_new = x + np.dot(K_k, innovation)
 
-        P_result = np.dot(self.I - np.dot(K_k, self.H_k), P_current)
+        P_result = np.dot(self.I - np.dot(K_k, self.H_k), P_adapted)
+
+        # ── 速度直注入（带死区 + 钳位） ──
+        # 仅在归一化残差超过死区时注入，过滤静止/低速时的 YOLO 检测噪声
+        if dt > 1e-6 and self._vel_inject_gain > 0 and norm_innov > self._vel_inject_deadzone:
+            vel_inject = innovation[:2] / dt * self._vel_inject_gain
+            # 钳位：限制单次注入幅值，防止消失前异常残差导致飞框
+            inject_speed = float(np.sqrt(vel_inject[0]**2 + vel_inject[1]**2))
+            if inject_speed > self._vel_inject_max:
+                vel_inject *= self._vel_inject_max / inject_speed
+            x_new[4] += vel_inject[0]
+            x_new[5] += vel_inject[1]
+
+        # ── [debug] update 诊断输出 ──
+        if self._debug:
+            k_cx, k_cy = float(K_k[0, 0]), float(K_k[1, 1])
+            print(f"[BBoxKF update] "
+                  f"dist={dist:.1f} "          # ← 新增：正常<10, 遮挡恢复>30                                                           
+                  f"pred=({x[0]:.1f},{x[1]:.1f}) "
+                  f"obs=({z[0]:.1f},{z[1]:.1f}) "
+                  f"out=({x_new[0]:.1f},{x_new[1]:.1f}) | "
+                  f"innov=({innovation[0]:.1f},{innovation[1]:.1f}) "
+                  f"norm={norm_innov:.3f} alpha={alpha:.2f} "
+                  f"K=({k_cx:.3f},{k_cy:.3f}) | "
+                  f"vel=({x_new[4]:.1f},{x_new[5]:.1f})")
+                    
 
 
-        # 如果 YOLO 观测点和卡尔曼预测点中心距离超过 150 像素，直接判定预测失败
-        # 强行重置位置并清空瞬时速度，防止预测框“起飞”
+
+        # 跳变检测：YOLO 观测点和卡尔曼预测点中心距离超过 150 像素时硬重置
         dist = np.linalg.norm(x[:2] - z[:2])
         if dist > 150:
-            x_new[:4] = z
-            x_new[4:] = 0.0
-            
-            # 底层状态硬钳制。限制像素速度 (vx, vy, vw, vh) 单帧最大变化量不超过 50 像素
-            x_new[4:] = np.clip(x_new[4:], -50, 50)
-
-
-            # 大残差回退：仅重置位置与尺度，保留平移速度连续性
+            # 大残差回退：重置位置与尺度，保留平移速度连续性
             x_new[:4] = z
 
-            # 保留并衰减平移速度，避免“速度归零”导致后续几乎不动
+            # 保留并衰减平移速度，避免”速度归零”导致后续几乎不动
             x_new[4:6] = 0.7 * x[4:6]
 
             # 尺度速度在突变时清零，防止宽高发散
             x_new[6:8] = 0.0
 
-            # 协方差回退但不完全冷启动，降低抖动
-            P_reset = P_current.copy()
-            P_reset[:4, :4] *= 0.5   # 位置尺度更信观测
-            P_reset[4:, 4:] *= 1.2   # 速度保持一定不确定性
-        
             return x_new, np.eye(self.n)
 
-            
+
         return x_new, P_result
