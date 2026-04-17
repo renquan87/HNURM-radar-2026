@@ -26,11 +26,10 @@ yolo_pipeline.py — 三阶段 YOLO 推理引擎
 """
 
 import math
+
 import cv2
 
-from .label_mappings import (
-    Gray2Blue, Gray2Red, gray2gray, Blue2Gray, Red2Gray,
-)
+from .label_mappings import Blue2Gray, Gray2Blue, Gray2Red, Red2Gray, gray2gray
 
 
 class YoloPipeline:
@@ -124,9 +123,7 @@ class YoloPipeline:
         """判断 Stage 1 追踪结果是否为空。"""
         if results is None:
             return True
-        if results[0].boxes.id is None:
-            return True
-        return False
+        return results[0].boxes.id is None
 
     def parse_results(self, results):
         """解析 Stage 1 追踪结果为 numpy 数组。
@@ -283,7 +280,6 @@ class YoloPipeline:
             return frame, None
 
         label_list, conf_list = classify_result
-        index = 0
         for i in range(len(roi_list)):
             classify_label = label_list[i]
             conf = conf_list[i]
@@ -366,8 +362,7 @@ class YoloPipeline:
             draw_candidate.append(
                 [track_id, x_left, y_left, x_right, y_right, label])
             zip_results.append([xyxy_box, xywh_box, track_id, label])
-            self.id_candidate[track_id] = index
-            index += 1
+            self.id_candidate[track_id] = len(draw_candidate) - 1
 
         # 在图像上画出检测结果
         for box in draw_candidate:
@@ -389,10 +384,12 @@ class YoloPipeline:
         self.id_candidate = [0] * self._max_track_id
 
         # 重置 ByteTrack 跟踪器
-        if (hasattr(self.model_stage1, 'predictor')
-                and self.model_stage1.predictor is not None):
-            if hasattr(self.model_stage1.predictor, 'trackers'):
-                self.model_stage1.predictor.trackers = None
+        if (
+            hasattr(self.model_stage1, 'predictor')
+            and self.model_stage1.predictor is not None
+            and hasattr(self.model_stage1.predictor, 'trackers')
+        ):
+            self.model_stage1.predictor.trackers = None
 
 
 class _PrintLogger:

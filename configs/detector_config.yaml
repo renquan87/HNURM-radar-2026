@@ -19,10 +19,10 @@ params:
 
 # 推理/显示分辨率（detector_node 和 camera_detector 共用）
 resolution:
-  infer_width: 1536                   # 推理输入宽度 # 1920
-  infer_height: 1125                  # 推理输入高度 # 1080
-  display_width: 1536                 # 检测结果显示宽度
-  display_height: 1125                # 检测结果显示高度
+  infer_width: 1920                   # 推理输入宽度 # 1920 # rosbag 1536
+  infer_height: 1080                  # 推理输入高度 # 1080 # rosbag 1125
+  display_width: 1920                 # 检测结果显示宽度 # 1920 # rosbag 1536
+  display_height: 1080                # 检测结果显示高度 # 1080 # rosbag 1125
 
 # 坐标卡尔曼滤波器参数
 filter:
