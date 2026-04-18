@@ -199,6 +199,8 @@ class EKFNode(Node):
         self._slot_raw_xy: list[tuple] = [(0.0, 0.0)] * NUM_SLOTS
         # slot → robot_id 的映射（动态更新）
         self._slot_robot_id: list[int] = [0] * NUM_SLOTS
+        # 降低高频日志刷屏
+        self._timer_log_counter = 0
 
     # 获取当前时间的毫秒数    
     def get_current_time_ms(self):
@@ -207,15 +209,20 @@ class EKFNode(Node):
         milliseconds = time_msg.sec * 1000 + time_msg.nanosec / 1e6
         return milliseconds
 
-    # 定时器回调函数    
+    # 定时器回调函数
     def timer_callback(self):
-        self.get_logger().info(f"Timestamp: {self.get_clock().now()}, Location: {self.recv_location.__str__()}")
+        self._timer_log_counter += 1
+        if self.debug_coordinate_publish and self._timer_log_counter % 20 == 0:
+            self.get_logger().debug(
+                f"EKF tick={self._timer_log_counter}, recv={len(self.recv_location.locs)}")
+
         locations = self.recv_location
         now_ms = self.get_current_time_ms()
 
-        # 重置每帧的检测标记
+        # 重置每帧检测标记 + 当前观测槽（防止旧观测被重复消费）
         for i in range(NUM_SLOTS):
             self._slot_has_detection[i] = False
+            self.locations_queue[1][i].time = 0
 
         # 更新测量值
         for i in range(len(locations.locs)):
@@ -265,25 +272,34 @@ class EKFNode(Node):
         estimated_locations = [[0, 0, 0, 0] for _ in range(NUM_SLOTS)]
         # 对每个机器人进行卡尔曼滤波
         for i in range(len(self.locations_queue[0])):
-            # 如果没有新的数据,则跳过
-            if self.locations_queue[1][i].time == 0:
-                continue
-            # 计算加速度
-            self.locations_queue[1][i].calculateInfo(self.locations_queue[0][i])
-            self.kalfilt[i].update_acceleration(self.locations_queue[1][i].a_x, self.locations_queue[1][i].a_y)
-            estimated_locations[i] = (self.kalfilt[i].step((self.locations_queue[1][i].x, self.locations_queue[1][i].v_x, self.locations_queue[1][i].y, self.locations_queue[1][i].v_y)))
-            
-        ## 保存历史位置（每帧更新，用于下一帧速度/加速度计算） 等测试完成之后再考虑优化
+            # 有新观测：完整更新；无观测：predict-only 维持连续性
+            if self.locations_queue[1][i].time != 0:
+                self.locations_queue[1][i].calculateInfo(self.locations_queue[0][i])
+                self.kalfilt[i].update_acceleration(
+                    self.locations_queue[1][i].a_x,
+                    self.locations_queue[1][i].a_y,
+                )
+                estimated_locations[i] = self.kalfilt[i].step((
+                    self.locations_queue[1][i].x,
+                    self.locations_queue[1][i].v_x,
+                    self.locations_queue[1][i].y,
+                    self.locations_queue[1][i].v_y,
+                ))
+            else:
+                estimated_locations[i] = self.kalfilt[i].predict_only()
+
+        # 保存历史观测（用于下一帧速度/加速度计算）
         for i in range(len(self.locations_queue[0])):
-            # if self.locations_queue[1][i].time > 0:
             if self.locations_queue[1][i].time > 0:
                 self.locations_queue[0][i].time = self.locations_queue[1][i].time
                 self.locations_queue[0][i].x = self.locations_queue[1][i].x
                 self.locations_queue[0][i].y = self.locations_queue[1][i].y
                 self.locations_queue[0][i].z = self.locations_queue[1][i].z
-                # self.locations_queue[0][i].v_x = self.locations_queue[1][i].v_x # 等测试完成之后再考虑优化
-                # self.locations_queue[0][i].v_y = self.locations_queue[1][i].v_y # 等测试完成之后再考虑优化
-        self.get_logger().info(f"Estimated locations: {estimated_locations}")
+                self.locations_queue[0][i].v_x = self.locations_queue[1][i].v_x
+                self.locations_queue[0][i].v_y = self.locations_queue[1][i].v_y
+
+        if self.debug_coordinate_publish and self._timer_log_counter % 20 == 0:
+            self.get_logger().debug(f"Estimated locations: {estimated_locations}")
         
         # 发布滤波后的位置信息
         # 使用 _slot_to_robot 反向映射，直接从 slot 索引获取 (robot_id, label)

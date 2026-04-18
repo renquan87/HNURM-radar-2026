@@ -31,6 +31,9 @@ filter:
   jump_threshold: 1.0          # 单帧跳变阈值 (m)，超过则拒绝更新
   max_velocity: 5.0            # 最大移动速度 (m/s)，超过则拒绝观测
   max_inactive_time: 3.0       # 滤波器超时清理时间 (s)
+  short_lost_frames: 6         # 轻量 LOST 窗口：轨迹短时丢失最多保留帧数
+  predict_publish_frames: 3    # 丢失后继续发布 predict-only 坐标的帧数
+  track_cache_ttl_sec: 1.2     # 轨迹缓存 TTL (s)，超时后彻底清理
 
 is_record: true
 record_fps: 60

@@ -104,8 +104,7 @@ class RobotEKF(EKF):
                                    int(tt/2 * self.acceleration_y),
                                    int(self.interval * self.acceleration_y)
                                     ))
-            print(f"stateTransitionFunction: B_k_dot_u_k={B_k_dot_u_k}")
-
+            # 高频主循环中禁止直接 print，避免刷屏与性能抖动
             # X_k = F_k * X_k-1 + B_k * u_k
             new_x = F_k.dot(x) + B_k_dot_u_k
         else:
@@ -118,4 +117,11 @@ class RobotEKF(EKF):
         # Observation function is identity
         H_k = np.eye(self.measurementCount)  # 状态值转换为测量值的函数为: y= f(x) = x,基本是恒等关系,故返回一个单位矩阵
         return H_k.dot(x), H_k   # 同时返回经状态转换函数变换后的测量值^: H_k(mxn) * X(nx1) = ZZ_k(mx1)
+
+    def predict_only(self):
+        """无新观测时仅执行预测步，维持轨迹连续。"""
+        self.x, F_k = self.stateTransitionFunction(self.x)
+        self.P_current = F_k * self.P_result * F_k.T + self.Q_k
+        self.P_result = self.P_current
+        return self.x
 

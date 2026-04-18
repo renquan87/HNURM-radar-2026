@@ -179,6 +179,16 @@ class CameraDetector(Node):
             max_velocity=float(filter_cfg.get('max_velocity', 5.0)),
             max_inactive_time=float(filter_cfg.get('max_inactive_time', 3.0)),
         )
+
+        # ---------- 短时丢失续命参数（轻量吸收 ec344ff 的 LOST 思想） ----------
+        self.short_lost_frames = int(filter_cfg.get('short_lost_frames', 6))
+        self.predict_publish_frames = int(filter_cfg.get('predict_publish_frames', 3))
+        self.track_cache_ttl_sec = float(filter_cfg.get('track_cache_ttl_sec', 1.2))
+        if self.predict_publish_frames > self.short_lost_frames:
+            self.predict_publish_frames = self.short_lost_frames
+
+        # track_id -> 最小状态缓存
+        self._track_state_cache = {}
         self._cleanup_counter = 0
 
         # ---------- 启动线程 ----------
@@ -449,8 +459,64 @@ class CameraDetector(Node):
         # 重置推理管线的投票表和 ByteTrack 跟踪器
         self.pipeline.reset_tracking_state()
 
+        # 重置短时状态缓存
+        self._track_state_cache.clear()
+
         if self.is_debug:
             self.get_logger().info("跟踪器和滤波器状态已重置")
+
+    def _update_track_state_cache(
+            self, track_id, car_id, publish_label, field_x, field_y, now_ts):
+        """更新轨迹最小状态缓存。"""
+        self._track_state_cache[int(track_id)] = {
+            'car_id': int(car_id),
+            'publish_label': str(publish_label),
+            'last_field_xy': (float(field_x), float(field_y)),
+            'last_seen_ts': float(now_ts),
+            'miss_count': 0,
+            'is_predicted': False,
+        }
+
+    def _append_predicted_locations(self, all_location, observed_track_ids, observed_car_ids, now_ts):
+        """对短时丢失目标追加 predict-only 发布，避免遮挡瞬断。"""
+        stale_track_ids = []
+
+        for track_id, state in list(self._track_state_cache.items()):
+            if track_id in observed_track_ids:
+                continue
+            if state['car_id'] in observed_car_ids:
+                # 同一 car_id 已由其他 track 发布，避免重复
+                continue
+
+            age = float(now_ts) - float(state['last_seen_ts'])
+            if age > self.track_cache_ttl_sec or state['miss_count'] >= self.short_lost_frames:
+                stale_track_ids.append(track_id)
+                continue
+
+            # 仅在前 N 帧丢失时继续对外发布预测点
+            if state['miss_count'] < self.predict_publish_frames:
+                pred = self.kf_wrapper.predict(state['car_id'])
+                if pred is not None:
+                    pred_x, pred_y = float(pred[0]), float(pred[1])
+                    if np.isfinite(pred_x) and np.isfinite(pred_y):
+                        pred_x = max(0.0, min(FIELD_WIDTH, pred_x))
+                        pred_y = max(0.0, min(FIELD_HEIGHT, pred_y))
+
+                        loc = Location()
+                        loc.x = pred_x
+                        loc.y = pred_y
+                        loc.z = 0.0
+                        loc.id = int(state['car_id'])
+                        loc.label = state['publish_label']
+                        all_location.locs.append(loc)
+
+                        state['last_field_xy'] = (pred_x, pred_y)
+                        state['is_predicted'] = True
+
+            state['miss_count'] += 1
+
+        for track_id in stale_track_ids:
+            self._track_state_cache.pop(track_id, None)
 
     # ================================================================
     #  主推理循环
@@ -492,6 +558,8 @@ class CameraDetector(Node):
                 # ---------- 透视变换 + 发布 ----------
                 allLocation = Locations()
                 carList_results = []
+                observed_track_ids = set()
+                observed_car_ids = set()
 
                 if results is not None:
                     for result in results:
@@ -501,22 +569,23 @@ class CameraDetector(Node):
                         # if label == "NULL":
                         #     continue
                         
-                        # 过滤己方车辆（debug 模式下保留己方，用于小地图展示）
-                        car_id = self.carList.get_car_id(label) if label != "NULL" else -1
-                        # 测试模式：允许 NULL 标签通过，使用 track_id 作为临时 ID
-                        if car_id == -1 and label == "NULL":
-                            car_id = 9000 + track_id  # 使用 9000+ 作为 NULL 机器人的临时 ID
-                        elif car_id == -1:
+                        is_null = (label == "NULL")
+
+                        # 与方案二一致：NULL 透传显示，不进入 CarList 身份链路
+                        car_id = -1 if is_null else self.carList.get_car_id(label)
+                        if (not is_null) and car_id == -1:
                             continue
+
                         is_friendly = False
-                        if self.my_color == "Red" and car_id < 100 and car_id != 7:
-                            if not self.debug_coordinate_publish:
-                                continue
-                            is_friendly = True
-                        if self.my_color == "Blue" and car_id > 100 and car_id != 107:
-                            if not self.debug_coordinate_publish:
-                                continue
-                            is_friendly = True
+                        if not is_null:
+                            if self.my_color == "Red" and car_id < 100 and car_id != 7:
+                                if not self.debug_coordinate_publish:
+                                    continue
+                                is_friendly = True
+                            if self.my_color == "Blue" and car_id > 100 and car_id != 107:
+                                if not self.debug_coordinate_publish:
+                                    continue
+                                is_friendly = True
 
                         # 将推理分辨率坐标还原到原始分辨率
                         orig_xyxy = [
@@ -544,12 +613,13 @@ class CameraDetector(Node):
                             field_x = max(0, min(FIELD_WIDTH, field_x))
                             field_y = max(0, min(FIELD_HEIGHT, field_y))
 
-                        # ★ 卡尔曼滤波平滑坐标
-                        field_x, field_y = self.kf_wrapper.update(
-                            car_id, field_x, field_y)
-                        # 滤波后再次 clamp
-                        field_x = max(0.0, min(FIELD_WIDTH, field_x))
-                        field_y = max(0.0, min(FIELD_HEIGHT, field_y))
+                        # ★ 卡尔曼滤波平滑坐标（NULL 不参与）
+                        if not is_null:
+                            field_x, field_y = self.kf_wrapper.update(
+                                car_id, field_x, field_y)
+                            # 滤波后再次 clamp
+                            field_x = max(0.0, min(FIELD_WIDTH, field_x))
+                            field_y = max(0.0, min(FIELD_HEIGHT, field_y))
 
                         field_xyz = np.array([field_x, field_y, 0.0])
 
@@ -566,7 +636,7 @@ class CameraDetector(Node):
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
 
                         # 组装 CarList 结果（己方和 NULL 机器人跳过 CarList 更新）
-                        if label != "NULL" and not is_friendly:
+                        if (not is_null) and (not is_friendly):
                             orig_xywh = [
                                 float(xywh_box[0] * ORIG_W / INFER_W),
                                 float(xywh_box[1] * ORIG_H / INFER_H),
@@ -583,12 +653,35 @@ class CameraDetector(Node):
                         loc.x = float(field_x)
                         loc.y = float(field_y)
                         loc.z = 0.0
-                        loc.id = car_id
-                        if is_friendly:
-                            loc.label = "Friendly"
+                        if is_null:
+                            # 与方案二一致：NULL 固定 id=0 + label='NULL'
+                            loc.id = 0
+                            loc.label = "NULL"
                         else:
+                            loc.id = int(car_id)
+                            # 与方案二一致：仅使用 Red/Blue，不再输出 Friendly
                             loc.label = "Red" if car_id < 100 else "Blue"
                         allLocation.locs.append(loc)
+
+                        if not is_null:
+                            observed_track_ids.add(int(track_id))
+                            observed_car_ids.add(int(car_id))
+                            self._update_track_state_cache(
+                                track_id=track_id,
+                                car_id=car_id,
+                                publish_label=loc.label,
+                                field_x=field_x,
+                                field_y=field_y,
+                                now_ts=now,
+                            )
+
+                # 补发短时丢失目标的预测坐标
+                self._append_predicted_locations(
+                    all_location=allLocation,
+                    observed_track_ids=observed_track_ids,
+                    observed_car_ids=observed_car_ids,
+                    now_ts=now,
+                )
 
                 # 更新 CarList
                 if carList_results:

@@ -179,7 +179,26 @@ class EnhancedKalmanFilter:
         self.kf.transitionMatrix[1, 3] = dt
 
         predicted = self.kf.predict()
-        return float(predicted[0, 0]), float(predicted[1, 0])
+
+        # OpenCV 在无 correct() 的连续 predict 场景下，显式回写后验状态，
+        # 确保预测链可持续推进。
+        self.kf.statePost = predicted.copy()
+        if hasattr(self.kf, 'errorCovPre'):
+            self.kf.errorCovPost = self.kf.errorCovPre.copy()
+
+        # 速度限幅 + 阻尼，避免遮挡期外推速度发散。
+        self.kf.statePost[2, 0] = float(np.clip(
+            self.kf.statePost[2, 0], -self.max_velocity, self.max_velocity) * 0.96)
+        self.kf.statePost[3, 0] = float(np.clip(
+            self.kf.statePost[3, 0], -self.max_velocity, self.max_velocity) * 0.96)
+
+        pred_x = float(self.kf.statePost[0, 0])
+        pred_y = float(self.kf.statePost[1, 0])
+
+        self.last_update_time = now
+        self.last_position = np.array([pred_x, pred_y])
+
+        return pred_x, pred_y
 
     def time_since_update(self):
         """返回距上次更新的秒数"""
