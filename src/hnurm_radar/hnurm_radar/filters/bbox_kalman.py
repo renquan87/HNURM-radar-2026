@@ -65,9 +65,25 @@ class BBoxKalmanFilter(object):
         self.I = np.eye(self.n)
 
 
-        # 1. 过程噪声基准权重 (Q): 反映系统动态模型的信任程度，数值远小于R以确保对预测的及时响应。
+        # ========================= 调参建议 =========================
+        # 目标 A：预测框飞框/抖动偏大
+        #   1) 降低 _vel_inject_gain，或降低 _vel_inject_max
+        #   2) 提高 _r_weight_pos（更不信观测）或降低 _q_weight_vel（更稳）
+        #   3) 降低 _akf_alpha_max / _akf_r_gain（减弱自适应激进程度）
+        #
+        # 目标 B：高速目标跟不上 / 预测框停在原地
+        #   1) 提高 _q_weight_vel（速度状态更快收敛）
+        #   2) 降低 _r_weight_pos（更信观测，K增大）
+        #   3) 提高 _vel_inject_gain（必要时同步提高 _vel_inject_max）
+        #   4) 提高 vel_damping_xy（减小速度衰减）
+        #
+        # 建议流程：每次仅改 1~2 个参数，小步调整（10%~20%），配合日志观察 dist/norm/K/vel。
+        # =====================================================================
+
+        # 1) 过程噪声基准权重 Q
+        # 含义：模型自身不确定性。越大 -> 越灵活；越小 -> 越平滑。
         self._q_weight_pos = 1.0 / 10000    
-        self._q_weight_vel = 1.0 / 15       # 速度过程噪声，大幅增大以加速速度状态收敛
+        self._q_weight_vel = 1.0 / 15       # 速度过程噪声，调大可提升高速跟随；过大可能引入抖动
         # # 上一版参数
         # self._q_weight_vel = 1.0 / 40
         # # 原始参数
@@ -75,34 +91,35 @@ class BBoxKalmanFilter(object):
         self._q_weight_scale = 1.0 / 20000
 
 
-        # 2. 观测噪声基准权重 (R): 保持对观测值的适度信任，构建低通屏障
-        self._r_weight_pos = 1.0 / 800     # 大幅降低 R，使 K 从 0.15 提升至 0.5 附近
+        # 2) 观测噪声基准权重 R
+        # 含义：对检测观测的信任度。R越小 -> 越信观测（响应快）；R越大 -> 越信预测（更稳）。
+        self._r_weight_pos = 1.0 / 800     # 位置观测噪声，调小可提升响应速度；若抖动偏大可上调
         # # 上一版参数
         # self._r_weight_pos = 1.0 / 200
-        self._r_weight_scale = 1.0 / 200    # 尺度的观测噪声权重
+        self._r_weight_scale = 1.0 / 200    # 尺度观测噪声，调大更跟观测，调小更平滑
         # # 原始参数
         # self._r_weight_pos = 1.0 / 100      # 中心点位置的观测噪声权重 (量级远大于Q)
         # self._r_weight_scale = 1.0 / 200    # 尺度的观测噪声权重
 
-        # 3. AKF 自适应参数
+        # 3) AKF 自适应参数（残差较大时临时增强更新）
         self._akf_innov_thr = 0.08
         self._akf_alpha_max = 8.0
         self._akf_r_gain = 0.7
 
-        # 4. AKF predict 侧：速度自适应过程噪声
+        # 4) predict 侧速度自适应过程噪声（高速目标）
         self._akf_vel_boost_thr = 18.0
         self._akf_vel_boost_max = 5.0
 
-        # 5. 速度直注入
+        # 5) 速度直注入（innovation -> velocity）
         self._vel_inject_gain = 0.22
         self._vel_inject_deadzone = 0.03
         self._vel_inject_max = 140.0
-        self._vel_inject_norm_max = 0.7   # 新增：残差过大时禁止注入，防误关联飞框
+        self._vel_inject_norm_max = 0.7   # 残差过大时禁止注入，防误关联飞框
 
-        # 6. 预测速度钳位
-        self._predict_speed_max = 220.0   # 新增：纯预测阶段速度上限(px/s)
+        # 6) 预测速度钳位（纯预测阶段防发散）
+        self._predict_speed_max = 220.0   # 纯预测阶段速度上限(px/s)
 
-        # 调试开关：输出 predict/update 关键指标
+        # 调试开关：输出 predict/update 关键指标（上线建议关闭）
         self._debug = True
         
         

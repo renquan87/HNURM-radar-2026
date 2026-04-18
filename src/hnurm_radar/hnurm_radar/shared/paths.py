@@ -35,6 +35,7 @@ WEIGHTS_DIR = os.path.join(DATA_DIR, "weights")           # 从 weights/ 迁移�
 MAP_DIR = os.path.join(DATA_DIR, "maps")                  # 从 map/ 迁移到 data/maps/
 RECORD_DIR = os.path.join(PROJECT_ROOT, "record")
 TEST_RESOURCES_DIR = os.path.join(PROJECT_ROOT, "test_resources")
+FIELD_DIR = os.path.join(PROJECT_ROOT, "field")
 
 # ======================== 配置文件 ========================
 MAIN_CONFIG_PATH = os.path.join(CONFIGS_DIR, "main_config.yaml")
@@ -42,10 +43,17 @@ DETECTOR_CONFIG_PATH = os.path.join(CONFIGS_DIR, "detector_config.yaml")
 _CONVERTER_CONFIG_DEFAULT_PATH = os.path.join(CONFIGS_DIR, "converter_config.yaml")
 _CONVERTER_CONFIG_ROSBAG_PATH = os.path.join(CONFIGS_DIR, "converter_config_rosbag.yaml")
 PERSPECTIVE_CALIB_PATH = os.path.join(CONFIGS_DIR, "perspective_calib.json")
+RAYCAST_CALIB_PATH = os.path.join(CONFIGS_DIR, "raycast_calib.yaml")
 BYTETRACK_CONFIG_PATH = os.path.join(CONFIGS_DIR, "bytetrack.yaml")
 BOTSORT_CONFIG_PATH = os.path.join(CONFIGS_DIR, "botsort.yaml")
 HAP_CONFIG_PATH = os.path.join(CONFIGS_DIR, "HAP_config.json")
 ICP_RVIZ_PATH = os.path.join(CONFIGS_DIR, "icp.rviz")
+
+# ======================== 赛场模型与标定点 ========================
+KEYPOINT_6_PATH = os.path.join(FIELD_DIR, "keypoint_6.txt")
+KEYPOINT_6_REGION_PATH = os.path.join(FIELD_DIR, "keypoint_6_region.txt")
+FIELD_MESH_NATIONAL_PATH = os.path.join(FIELD_DIR, "RMUC2025_National.PLY")
+FIELD_MESH_REGIONAL_PATH = os.path.join(FIELD_DIR, "RMUC2025_Regional.PLY")
 
 # ======================== 模型权重 ========================
 STAGE_ONE_PATH = os.path.join(WEIGHTS_DIR, "stage_one", "stage_one.pt")

@@ -193,6 +193,9 @@ class CameraDetector(Node):
         self._load_or_calibrate_homography()
         self._load_mask()
 
+        # ---------- 坐标映射器初始化 ----------
+        self._init_coordinate_mapper()
+
         # ---------- 小地图 ----------
         self.map_img = cv2.imread(MAP_IMAGE_PATH)
         if self.map_img is None:
@@ -311,8 +314,94 @@ class CameraDetector(Node):
         self._interactive_calibrate()
 
     # ================================================================
-    #  透视变换：像素 → 赛场坐标
+    #  坐标映射器初始化与路由
     # ================================================================
+    def _init_coordinate_mapper(self):
+        """根据 main_config.yaml 中 coordinate_mapping 配置初始化映射器。"""
+        from ..mapping.homography_mapper import HomographyMapper
+
+        mapping_cfg = self.main_cfg.get('coordinate_mapping', {})
+        self.mapping_mode = mapping_cfg.get('mode', 'homography')
+        self.highland_z_thr = float(mapping_cfg.get('highland_z_threshold', 0.4))
+
+        # Homography 映射器 (始终初始化，compare 模式需要)
+        self.homography_mapper = HomographyMapper(
+            H_ground=self.H_ground,
+            H_highland=self.H_highland,
+            mask_img=self.mask_img,
+            my_color=self.my_color,
+            calib_map_w=self.calib_map_w,
+            calib_map_h=self.calib_map_h,
+            calib_map_portrait=self.calib_map_portrait,
+            field_width=FIELD_WIDTH,
+            field_height=FIELD_HEIGHT,
+            logger=self.get_logger(),
+        )
+
+        # Raycast 映射器 (仅在 raycast/compare 模式下初始化)
+        self.raycast_mapper = None
+        if self.mapping_mode in ('raycast', 'compare'):
+            try:
+                from ..mapping.raycast_mapper import RaycastMapper
+                raycast_cfg_path = resolve_path(
+                    mapping_cfg.get('raycast_config', 'configs/raycast_calib.yaml'))
+                self.raycast_mapper = RaycastMapper(
+                    raycast_cfg_path, self.my_color, logger=self.get_logger())
+                if not self.raycast_mapper.is_ready():
+                    self.get_logger().warn("射线求交映射器初始化失败，回退到 homography 模式。")
+                    self.mapping_mode = 'homography'
+                    self.raycast_mapper = None
+            except Exception as e:
+                self.get_logger().error(f"射线求交映射器加载异常: {e}，回退到 homography 模式。")
+                self.mapping_mode = 'homography'
+                self.raycast_mapper = None
+
+        self.get_logger().info(f"坐标映射模式: {self.mapping_mode}")
+
+    # ================================================================
+    #  透视变换：像素 → 赛场坐标 (统一路由入口)
+    # ================================================================
+    def pixel_to_field(self, px, py):
+        """
+        将图像像素坐标 (px, py) 映射到赛场坐标。
+        根据 mapping_mode 配置自动路由到 homography 或 raycast 后端。
+
+        参数:
+            px, py: 原始分辨率下的像素坐标
+        返回:
+            (field_x, field_y): 赛场坐标（单位 m），若变换失败返回 None
+            同时将 field_z 存入 self._last_field_z 供调用方读取
+        """
+        self._last_field_z = 0.0
+
+        if self.mapping_mode == 'raycast' and self.raycast_mapper is not None:
+            result = self.raycast_mapper.pixel_to_field(px, py)
+            if result is None:
+                return None
+            self._last_field_z = result[2]
+            return (result[0], result[1])
+
+        elif self.mapping_mode == 'compare' and self.raycast_mapper is not None:
+            h_result = self.homography_mapper.pixel_to_field(px, py)
+            r_result = self.raycast_mapper.pixel_to_field(px, py)
+            if h_result and r_result:
+                dx = abs(h_result[0] - r_result[0])
+                dy = abs(h_result[1] - r_result[1])
+                self.get_logger().debug(
+                    f"[compare] homo=({h_result[0]:.2f},{h_result[1]:.2f}) "
+                    f"ray=({r_result[0]:.2f},{r_result[1]:.2f},z={r_result[2]:.2f}) "
+                    f"diff=({dx:.2f},{dy:.2f})")
+            if h_result:
+                return (h_result[0], h_result[1])
+            return None
+
+        else:
+            # homography 模式 (默认)
+            result = self.homography_mapper.pixel_to_field(px, py)
+            if result is None:
+                return None
+            return (result[0], result[1])
+
     def _map_pixel_to_field(self, map_px, map_py):
         """
         将地图像素坐标转换为赛场米坐标。
@@ -345,81 +434,6 @@ class CameraDetector(Node):
             field_x = map_px / self.calib_map_w * FIELD_WIDTH
             field_y = (self.calib_map_h - map_py) / self.calib_map_h * FIELD_HEIGHT
         return field_x, field_y
-
-    def pixel_to_field(self, px, py):
-        """
-        将图像像素坐标 (px, py) 通过多层 Homography 变换到赛场坐标 (fx, fy)。
-
-        流程:
-          1. H 矩阵将相机像素变换到地图像素坐标
-          2. 用地图像素坐标查掩码判定高度层
-          3. 地图像素坐标转换为赛场米坐标
-
-        参数:
-            px, py: 原始分辨率下的像素坐标
-        返回:
-            (field_x, field_y): 赛场坐标（单位 m），若变换失败返回 None
-        """
-        if self.H_ground is None:
-            return None
-
-        pt = np.array([[[px, py]]], dtype=np.float64)
-
-        # Step 1: 地面层变换 → 地图像素坐标
-        transformed = cv2.perspectiveTransform(pt, self.H_ground)
-        map_x = transformed[0][0][0]
-        map_y = transformed[0][0][1]
-
-        # ★ 异常值检测：地图像素坐标超出合理范围则返回 None
-        # 允许一定的边界外扩，但不能太离谱
-        margin = 500  # 像素边界外扩
-        if self.calib_map_w is not None:
-            if (map_x < -margin or map_x > self.calib_map_w + margin or
-                map_y < -margin or map_y > self.calib_map_h + margin):
-                if self.is_debug:
-                    self.get_logger().warn(
-                        f"透视变换异常: px=({px:.0f},{py:.0f}) → map=({map_x:.1f},{map_y:.1f}) 超出范围")
-                return None
-
-        # Step 2: 查掩码判定高度层（直接用地图像素坐标查掩码）
-        if self.mask_img is not None and self.H_highland is not None:
-            mask_h, mask_w = self.mask_img.shape[:2]
-            # 掩码与标定地图同方向同尺寸，直接按比例映射
-            if self.calib_map_w is not None:
-                mx = int(map_x * mask_w / self.calib_map_w)
-                my = int(map_y * mask_h / self.calib_map_h)
-            else:
-                # 旧格式：map_x/map_y 是赛场米坐标
-                if self.mask_is_portrait:
-                    mx = int(map_y * mask_w / FIELD_HEIGHT)
-                    my = int(map_x * mask_h / FIELD_WIDTH)
-                else:
-                    mx = int(map_x * mask_w / FIELD_WIDTH)
-                    my = int(mask_h - map_y * mask_h / FIELD_HEIGHT)
-            mx = max(0, min(mx, mask_w - 1))
-            my = max(0, min(my, mask_h - 1))
-
-            pixel_color = self.mask_img[my, mx]
-            is_highland = not (pixel_color[0] == 0 and
-                               pixel_color[1] == 0 and
-                               pixel_color[2] == 0)
-
-            if is_highland:
-                # 用高地层矩阵重新变换
-                transformed_h = cv2.perspectiveTransform(pt, self.H_highland)
-                map_x = transformed_h[0][0][0]
-                map_y = transformed_h[0][0][1]
-                # 高地层变换后也要检查范围
-                if (map_x < -margin or map_x > self.calib_map_w + margin or
-                    map_y < -margin or map_y > self.calib_map_h + margin):
-                    if self.is_debug:
-                        self.get_logger().warn(
-                            f"高地层透视变换异常: px=({px:.0f},{py:.0f}) → map=({map_x:.1f},{map_y:.1f})")
-                    return None
-
-        # Step 3: 地图像素 → 赛场米坐标
-        fx, fy = self._map_pixel_to_field(map_x, map_y)
-        return (fx, fy)
 
     def get_box_bottom_center(self, xyxy_box):
         """
@@ -857,11 +871,13 @@ class CameraDetector(Node):
                     if field_coord is None:
                         continue
                     field_x, field_y = field_coord
+                    # raycast 模式下 _last_field_z 记录射线交点高度
+                    field_z = getattr(self, '_last_field_z', 0.0)
 
                     field_x = max(0.0, min(FIELD_WIDTH, field_x))
                     field_y = max(0.0, min(FIELD_HEIGHT, field_y))
 
-                    field_xyz = np.array([field_x, field_y, 0.0])
+                    field_xyz = np.array([field_x, field_y, field_z])
 
                     if robot.state == TrackingState.TRACKING and robot.field_x is not None:
                         dx, dy = field_x - robot.field_x, field_y - robot.field_y
@@ -877,7 +893,13 @@ class CameraDetector(Node):
                     if is_enemy or is_my_7:
                         # 对于非实测点 (LOST/GUESSING)，在 z 轴打上暗号标识
                         is_predict = (robot.state in [TrackingState.LOST, TrackingState.GUESSING])
-                        loc_z = -1.0 if is_predict else 0.0
+                        if is_predict:
+                            loc_z = -1.0
+                        elif self.mapping_mode == 'raycast':
+                            # raycast 模式下使用实际射线交点高度
+                            loc_z = field_z
+                        else:
+                            loc_z = 0.0
 
                         if best_label != "NULL":
                             # carList 更新包围框和物理坐标 (用于底层 Car 逻辑同步)
