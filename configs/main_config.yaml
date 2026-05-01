@@ -14,7 +14,7 @@ initial_pose:
     yaw: -2.93528 # 朝向场地反方向（弧度）
 
 global:
-  my_color: "Red" # "Blue"
+  my_color: "Blue" # "Blue"
   is_debug: true # False
   scene: "competition"  # "competition" = 赛场（28x15m）| "lab" = 实验室测试
   # 调试坐标发布开关

@@ -58,7 +58,7 @@ class DisplayPanel(Node):
         self._field_h = FIELD_HEIGHT
         self.map = cv2.imread(STD_MAP_PATH)
         
-        self.sub_location = self.create_subscription(Locations, "/ekf_location_filtered", self.location_callback, qos_profile)
+        self.sub_location = self.create_subscription(Locations, "ekf_location_filtered", self.location_callback, qos_profile)
 
         # 发布渲染后的小地图画面，供 Foxglove / 远程 RViz 查看
         # 使用 RELIABLE QoS 确保 foxglove_bridge 能订阅到

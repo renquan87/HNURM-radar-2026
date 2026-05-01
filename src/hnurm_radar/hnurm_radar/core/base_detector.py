@@ -32,9 +32,11 @@ class Detection:
 
     track_id: int = -1  # 跟踪 ID（-1 = 未跟踪）
     label: str = ""  # 分类标签，如 "B1", "R3", "G5"
-    class_id: int = -1  # 类别数字 ID
+    class_id: int = -1  # 类别数字 ID（裁判系统 car_id：R1=1…R7=7, B1=101…B7=107）
     confidence: float = 0.0  # 检测/分类置信度 [0, 1]
     bbox_xyxy: tuple = (0, 0, 0, 0)  # 像素坐标边界框 (x1, y1, x2, y2)
+    bbox_xywh: tuple = (0, 0, 0, 0)  # 像素坐标边界框 (cx, cy, w, h)
+    camera_xyz: tuple | None = None  # 相机坐标系 3D 位置 (x, y, z)
     field_xy: tuple | None = None  # 赛场坐标 (x, y)，若已定位
     field_xyz: tuple | None = None  # 赛场 3D 坐标 (x, y, z)，若有
     extra: dict[str, Any] = field(default_factory=dict)  # 扩展字段

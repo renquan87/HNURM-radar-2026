@@ -30,6 +30,7 @@ CarList 类：
 # 定义Car类和CarList类
 import threading
 from ruamel.yaml import YAML
+from ..core.base_detector import Detection
 
 # 检测类为主线程，Lidar类通过ros不断接收雷达数据是子线程，主线程detect中目标检测完毕从子线程中获取雷达数据，进行坐标解算，写入CarList类中
 # 决策与通信为子线程从CarList类中获取信息，进行决策解算后统一发信
@@ -157,26 +158,22 @@ class CarList:
         # 对CarList实例多线程锁，为了尽量减少上锁时间，把数据处理好再写入公共区域
         self.lock = threading.Lock()
 
-    # 每一个检测循环，刷新所有车辆信息,检测线程进行到写入部分时，会计算好每个追踪器和车辆的对应关系，确保一个车辆类型只被一个追踪器对应
-    # 并计算好车辆的所有位置信息 ， 打包为results传入
-    # result in results: [track_id , car_id , xywh , conf ,  camera_xyz , filed_xyz ]
-    # 注意，car_id需要转为[1,2,3,4,5,7,101,102,103...]的形式再打包
-    def update_car_info(self , results):
+    def update_car_info(self, results):
+        """每帧批量写入检测结果。
+
+        Args:
+            results: Detection 对象列表
+        """
         with self.lock:
-            for result in results:
-                track_id, car_id, xywh, conf, camera_xyz, field_xyz = result
-                # 根据car_id找到对应的Car对象
-                car = self.get_car_by_id(car_id)
+            for det in results:
+                car = self.get_car_by_id(det.class_id)
                 if car is not None:
-                    # 更新Car对象的信息
-                    car.set_track_info(track_id, conf, xywh)
-                    car.set_camera_xyz(camera_xyz)
-                    car.set_field_xyz(field_xyz)
-                    car.life_span = car.life_span_max # 重置生命周期
-                car.life_up() # 刷新的车辆生命周期先+1
-            # 对所有车辆生命周期减一,这样没有刷新的车辆生命周期减一
+                    car.set_track_info(det.track_id, det.confidence, det.bbox_xywh)
+                    car.set_camera_xyz(det.camera_xyz)
+                    car.set_field_xyz(det.field_xyz)
+                    car.life_span = car.life_span_max
+                car.life_up()
             for car in self.cars.values():
-                # print("life down",car.life_span)
                 car.life_down()
 
     # 根据car_id获取车对象，中间方法

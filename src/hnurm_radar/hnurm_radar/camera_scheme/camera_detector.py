@@ -21,6 +21,7 @@ from ruamel.yaml import YAML
 
 # from ..Camera.HKCam import *  # 使用海康工业相机时取消注释
 from ..Car.Car import CarList
+from ..core.base_detector import Detection
 from ..camera_locator.anchor import Anchor
 from ..camera_locator.point_picker import PointsPicker
 from ..filters.kalman_filter import KalmanFilterWrapper
@@ -644,9 +645,15 @@ class CameraDetector(Node):
                                 float(xywh_box[3] * ORIG_H / INFER_H),
                             ]
                             camera_xyz = np.array([0.0, 0.0, 0.0])  # 透视变换无3D相机坐标
-                            carList_results.append([
-                                track_id, car_id, orig_xywh, 1, camera_xyz, field_xyz
-                            ])
+                            carList_results.append(Detection(
+                                track_id=track_id,
+                                label=label,
+                                class_id=car_id,
+                                confidence=1.0,
+                                bbox_xywh=tuple(orig_xywh),
+                                camera_xyz=tuple(camera_xyz),
+                                field_xyz=tuple(field_xyz),
+                            ))
 
                         # 发布 Location 消息
                         loc = Location()

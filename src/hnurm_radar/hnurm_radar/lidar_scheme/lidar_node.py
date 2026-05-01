@@ -25,11 +25,11 @@ from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from ruamel.yaml import YAML
 from scipy.spatial import cKDTree
-from scipy.spatial.transform import Rotation
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import Header
 
 from ..shared.paths import DATA_DIR, MAIN_CONFIG_PATH, resolve_path
+from ..shared.transforms import tf_to_matrix, transform_points_homogeneous
 
 
 class PcdQueue:
@@ -233,16 +233,12 @@ class DynamicCloudNode(Node):
         # 构建变换矩阵及逆矩阵
         t = transform.transform.translation
         r = transform.transform.rotation
-        T = np.eye(4)
-        T[:3, :3] = Rotation.from_quat([r.x, r.y, r.z, r.w]).as_matrix()
-        T[:3, 3] = [t.x, t.y, t.z]
-        T_inv = np.linalg.inv(T)   # 用于将地图系点云转回雷达系
+        T = tf_to_matrix(t, r)
+        T_inv = np.linalg.inv(T)
 
         # 变换点云到地图坐标系（用于背景减除）
         if points_lidar.shape[0] > 0:
-            ones = np.ones((points_lidar.shape[0], 1))
-            points_hom = np.hstack([points_lidar, ones])
-            points_map = (T @ points_hom.T).T[:, :3].astype(np.float32)
+            points_map = transform_points_homogeneous(points_lidar, T).astype(np.float32)
         else:
             points_map = np.empty((0, 3), dtype=np.float32)
 
@@ -278,16 +274,12 @@ class DynamicCloudNode(Node):
 
         # 5. 将动态点云和 other 点云逆变换回雷达坐标系
         if dynamic_points_map.shape[0] > 0:
-            ones = np.ones((dynamic_points_map.shape[0], 1))
-            dynamic_hom = np.hstack([dynamic_points_map, ones])
-            dynamic_points = (T_inv @ dynamic_hom.T).T[:, :3].astype(np.float32)
+            dynamic_points = transform_points_homogeneous(dynamic_points_map, T_inv).astype(np.float32)
         else:
             dynamic_points = np.empty((0, 3), dtype=np.float32)
 
         if other.shape[0] > 0:
-            ones = np.ones((other.shape[0], 1))
-            other_hom = np.hstack([other, ones])
-            other_lidar = (T_inv @ other_hom.T).T[:, :3].astype(np.float32)
+            other_lidar = transform_points_homogeneous(other, T_inv).astype(np.float32)
         else:
             other_lidar = np.empty((0, 3), dtype=np.float32)
 

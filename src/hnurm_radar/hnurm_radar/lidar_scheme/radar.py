@@ -43,6 +43,7 @@ import cv2
 from cv_bridge import CvBridge
 import time
 from ..Car.Car import *
+from ..core.base_detector import Detection
 from sensor_msgs.msg import Image
 import open3d as o3d
 from ..Lidar.Converter import Converter , ROISelector
@@ -54,6 +55,7 @@ from collections import deque
 from ruamel.yaml import YAML
 import os
 from ..shared.paths import MAIN_CONFIG_PATH, CONVERTER_CONFIG_PATH
+from ..shared.transforms import tf_to_matrix, transform_points_homogeneous
 from detect_result.msg import DetectResult
 from detect_result.msg import Robots
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, qos_profile_sensor_data
@@ -63,7 +65,6 @@ from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 from geometry_msgs.msg import TransformStamped
-import yaml
 from std_msgs.msg import Header
 class Radar(Node):
 
@@ -120,24 +121,8 @@ class Radar(Node):
         # converter.camera_to_field_init(capture)
         # self.converter_inted = False
 
-        # 加载转换器配置文件
-        with open(converter_config_path, 'r', encoding='utf-8') as file:
-            data_loader = yaml.safe_load(file)
-
-        # 读取激光雷达到相机外参
-        # 构建旋转和平移矩阵，4*3的矩阵，前三列为旋转矩阵，第四列为平移矩阵
-        self.R = np.array(data_loader['calib']['extrinsic']['R']['data']).reshape(
-            (data_loader['calib']['extrinsic']['R']['rows'], data_loader['calib']['extrinsic']['R']['cols']))
-        self.T = np.array(data_loader['calib']['extrinsic']['T']['data']).reshape(
-            (data_loader['calib']['extrinsic']['T']['rows'], data_loader['calib']['extrinsic']['T']['cols']))
-        # 构建外参矩阵，4*4的矩阵，激光雷达到相机的外参矩阵
-        self.extrinsic_matrix = np.hstack((self.R, self.T))
-        self.extrinsic_matrix = np.vstack((self.extrinsic_matrix, [0, 0, 0, 1]))
-        # 相机到激光雷达的变换矩阵（通过求逆得到）
-        self.extrinsic_matrix_inv = np.linalg.inv(self.extrinsic_matrix)
-        
-        
-
+        # 相机到激光雷达的变换矩阵（复用 Converter 已加载的外参）
+        self.extrinsic_matrix_inv = self.converter.extrinsic_matrix_inv_np
 
         self.start_time = time.time()
         # fps计算
@@ -174,39 +159,13 @@ class Radar(Node):
             rotation = transform.transform.rotation
             # self.log_transform(transform)
             # 转换为 4x4 变换矩阵
-            transform_matrix = self.tf_to_matrix(translation, rotation)
+            transform_matrix = tf_to_matrix(translation, rotation)
             self.radar_to_field = transform_matrix
             self.radar_to_field_inv = np.linalg.inv(self.radar_to_field)
             # self.get_logger().info(f"获取 TF 成功: {transform}")
         except TransformException as ex:
             self.get_logger().error(f"获取 TF 失败: {ex}")    
 
-    # 将 TF 转换为 4x4 齐次变换矩阵
-    def tf_to_matrix(self, translation, rotation):
-        # 四元数转旋转矩阵
-        q = np.array([rotation.x, rotation.y, rotation.z, rotation.w])
-        R = self.quaternion_to_rotation_matrix(q)
-
-        # 构建 4x4 齐次变换矩阵
-        transform_matrix = np.eye(4)
-        transform_matrix[:3, :3] = R
-        transform_matrix[:3, 3] = [translation.x, translation.y, translation.z]
-        return transform_matrix
-    def quaternion_to_rotation_matrix(self, q):
-        # 四元数转旋转矩阵
-        x, y, z, w = q
-        return np.array([
-            [1 - 2*(y**2 + z**2), 2*(x*y - z*w),     2*(x*z + y*w)],
-            [2*(x*y + z*w),     1 - 2*(x**2 + z**2), 2*(y*z - x*w)],
-            [2*(x*z - y*w),     2*(y*z + x*w),     1 - 2*(x**2 + y**2)]
-        ])
-
-    # 将相机坐标系下的点云转换到激光雷达坐标系
-    def camera_to_lidar(self, pc):
-        pc = np.hstack((pc, np.ones((pc.shape[0], 1)))) # 齐次化
-        ret = np.dot(pc, self.extrinsic_matrix) # 矩阵变换
-        ret = ret[:, :3] # 去齐次化
-        return ret
     # 点云回调函数
     def pcd_callback(self, msg):
         '''
@@ -369,7 +328,15 @@ class Radar(Node):
                 # NULL 标签机器人不写入 CarList，单独收集用于 display_panel 显示
                 null_robot_locations.append(field_xyz)
             else:
-                self.carList_results.append([track_id , self.carList.get_car_id(label) , xywh_box , 1 , center , field_xyz]) # no clear ?
+                self.carList_results.append(Detection(
+                    track_id=track_id,
+                    label=label,
+                    class_id=self.carList.get_car_id(label),
+                    confidence=1.0,
+                    bbox_xywh=tuple(xywh_box),
+                    camera_xyz=tuple(center[:3]),
+                    field_xyz=tuple(field_xyz),
+                ))
         self.carList.update_car_info(self.carList_results)
         all_infos = self.carList.get_all_info() # 此步不做trust的筛选，留给messager做
         my_car_infos = []

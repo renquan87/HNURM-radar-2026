@@ -84,6 +84,8 @@ class Converter:
         self.extrinsic_matrix = cp.vstack((self.extrinsic_matrix, [0, 0, 0, 1]))
         # 相机到激光雷达的外参矩阵，4*4的矩阵，前三列为旋转矩阵，第四列为平移矩阵
         self.extrinsic_matrix_inv = cp.linalg.inv(self.extrinsic_matrix)
+        self.extrinsic_matrix_np = np.array(self.extrinsic_matrix.get())
+        self.extrinsic_matrix_inv_np = np.array(self.extrinsic_matrix_inv.get())
         # 相机到赛场坐标系的外参矩阵，4*4的矩阵，前三列为旋转矩阵，第四列为平移矩阵
         self.camera_to_field_R = None # 后面初始化
         self.camera_to_field_T = None # 后面初始化
