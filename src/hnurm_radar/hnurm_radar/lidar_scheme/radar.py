@@ -159,8 +159,8 @@ class Radar(Node):
         self.tf_buffer = Buffer()  # 创建 TF 缓冲区
         self.tf_listener = TransformListener(self.tf_buffer, self)  # 创建监听器
         self.timer = self.create_timer(1.0, self.on_timer)  # 定时查询 TF
-        self.radar_to_field = np.ones((4, 4)) # 激光雷达到赛场的tf矩阵
-        self.radar_to_field_inv = np.ones((4, 4)) # 激光雷达到赛场的tf矩阵的逆（用于将点云转换回雷达坐标系）
+        self.radar_to_field = np.eye(4)
+        self.radar_to_field_inv = np.eye(4)
 
     # 定时查询 TF
     def on_timer(self):
@@ -179,9 +179,6 @@ class Radar(Node):
             self.radar_to_field_inv = np.linalg.inv(self.radar_to_field)
             # self.get_logger().info(f"获取 TF 成功: {transform}")
         except TransformException as ex:
-            self.radar_to_field = np.ones((4, 4)) # 之后改为 np.eye(4)（单位阵），或者更优雅的做法：在全局保留上一次成功的矩阵 last_valid_tf
-            self.get_logger().error(f"获取 TF 失败: {ex}")    
-    
             self.get_logger().error(f"获取 TF 失败: {ex}")    
 
     # 将 TF 转换为 4x4 齐次变换矩阵
@@ -313,10 +310,9 @@ class Radar(Node):
             # 获取检测框信息
             xyxy_box, xywh_box ,  track_id , label = sg_result.xyxy_box, sg_result.xywh_box, sg_result.track_id, sg_result.label
             # self.get_logger().info('I heard: "%s"' % xyxy_box)
-            # [测试] 己方车辆不再过滤，与敌方走相同的检测→CarList→EKF 流程，
-            # 以便 display_panel 小地图同时显示己方和敌方。
-            # ⚠️ 注意：这也会导致 judge_messager 向裁判系统发送己方坐标，
-            # 正式比赛前需恢复过滤或在 judge_messager 中屏蔽己方。
+            # 己方车辆与敌方走相同的检测→CarList→EKF 流程，
+            # display_panel 小地图同时显示己方和敌方。
+            # judge_messager 已在发送侧按 label 过滤友方，不会误报。
             is_null = (label == "NULL")
 
             # 获取新xyxy_box , 原来是左上角和右下角，现在想要中心点保持不变，宽高设为原来的一半，再计算一个新的xyxy_box,可封装
@@ -347,10 +343,8 @@ class Radar(Node):
             # 多坐标系转换
             # print((self.camera_to_lidar((center))))
             # 相机坐标系 → 雷达坐标系
-            center = np.hstack((center, np.array((1)))) # 齐次化
-            center = center[:3]
-            center = np.hstack((center, np.array((1)))) # ❓为什么要齐次化两次？
-            lidar_center = np.dot(self.extrinsic_matrix_inv, center) # camera→lidar: 用外参逆矩阵左乘列向量 2
+            center = np.hstack((center, np.array((1,))))
+            lidar_center = np.dot(self.extrinsic_matrix_inv, center)
             # lidar_center = np.dot(center, self.extrinsic_matrix) # 使用外参矩阵进行转换
             lidar_center = lidar_center[:3]
             self.get_logger().info("lidar_center: {}".format(lidar_center))
@@ -393,8 +387,8 @@ class Radar(Node):
                 if track_id == -1:
                     continue
                 my_car_infos.append(all_info)
-                # [测试] 己方机器人也发布 Location，与敌方走相同流程，
-                # 以便 display_panel 小地图显示。正式比赛前需恢复过滤。
+                # 己方机器人也发布 Location，供 display_panel 小地图显示。
+                # judge_messager 已在发送侧按 label 过滤友方。
                 loc = Location()
                 loc.x = field_xyz[0]
                 loc.y = field_xyz[1]

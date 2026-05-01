@@ -68,7 +68,7 @@ class DynamicCloudNode(Node):
         self.lidar_topic_name = lidar_cfg["lidar_topic_name"]
 
         # ---------- 静态地图加载 ----------
-        pcd_path = resolve_path("/home/syh/rm_lidar_2027/HNURM-radar-2026/data/pointclouds/background/RM2025.pcd")
+        pcd_path = resolve_path(lidar_cfg["background_map_path"])
         self.map_cloud = self._load_and_filter_map(pcd_path, leaf_size=0.1)
         self.kd_tree = cKDTree(self.map_cloud)
         self.get_logger().info(f"静态地图加载完成，点数: {len(self.map_cloud)}")

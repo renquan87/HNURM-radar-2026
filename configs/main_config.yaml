@@ -46,7 +46,7 @@ scenes:
 
 # 相机输入配置（用于 camera_detector 和 detector_node 的图像来源）
 camera:
-  mode: "video"               # "test": 测试模式(静态图片) | "video": USB摄像头/视频文件 | "hik": 海康工业相机 | "rosbag": rosbag回放模式
+  mode: "rosbag"               # "test": 测试模式(静态图片) | "video": USB摄像头/视频文件 | "hik": 海康工业相机 | "rosbag": rosbag回放模式
   exposure_time: 15000.0       # 曝光时间(μs)。室内建议 15000~25000，室外/赛场建议 5000~10000。过大=过曝，过小=欠曝
   gain: 20.0                  # 增益(dB)。越大越亮但噪点越多。建议范围 10~25
   video_source: "test_resources/7.27-华东理工-00.04.40.729-00.28.10.978-seg2.mp4"  # video 模式下的输入源：0=USB摄像头, 或视频文件路径如 "test_resources/video.mp4"（相对于项目根目录）

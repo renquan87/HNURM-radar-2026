@@ -155,7 +155,10 @@ class JudgeMessager(Node):
 
             for i in range(len(cur_locations.locs)):
                 location = cur_locations.locs[i]
-                # 跳过 NULL 等无效 ID，避免 KeyError
+                # 跳过友方机器人——只向裁判系统发送敌方坐标
+                if location.label == self.my_color or location.label == 'NULL':
+                    continue
+                # 跳过无效 ID，避免 KeyError
                 if location.id not in robot_trans:
                     continue
                 x = round(location.x, 2)
