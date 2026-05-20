@@ -35,7 +35,7 @@
 | `air_config.py` | 从 `main_config.yaml` 读取配置（dataclass） |
 | `point_cloud_processor.py` | ROI 裁剪、体素降采样、高度过滤（提取空中区域） |
 | `cluster_detector.py` | DBSCAN 聚类 + Z 轴压缩（HITS 特性）+ 目标尺寸过滤 |
-| `background_subtractor.py` | 体素化背景减除（仅学习地面区域，不学习空中悬停点） |
+| `background_subtractor.py` | map 坐标系 KDTree 背景减除；兼容旧的 PCD/online 体素模式 |
 | `air_kalman_filter.py` | 4 状态 [x, y, vx, vy] 卡尔曼滤波（含 cov_factor、stop_p_time） |
 | `target_tracker.py` | 多目标跟踪（Mahalanobis 匹配 + 强制合并 + 丢失超时） |
 | `air_target_node.py` | 主 ROS2 节点，串联以上模块，订阅点云，发布坐标 |
@@ -50,17 +50,16 @@
 |---|---|
 | `configs/main_config.yaml` | 新增 `air_target:` 配置段（预处理/聚类/跟踪/背景减除参数） |
 | `src/hnurm_radar/setup.py` | 添加 `air_target_node` 入口点 |
-| `src/hnurm_bringup/launch/hnurm_radar_launch.py` | 添加 `air_target_node` 节点 |
-| ~~`src/hnurm_bringup/launch/hnurm_radar_video_launch.py`~~ | 已删除（该文件为方案二离线视频调试用，与空中方案无关） |
+| `src/hnurm_bringup/launch/hnurm_air_launch.py` | 编排 `lidar_node`、`air_target_node`、`display_panel`、`ekf_node`、`judge_messager` |
 | `src/hnurm_radar/hnurm_radar/Car/Car.py` | 支持 ID 6/106（红蓝空中机器人） |
-| `src/ekf/ekf/ekf_node.py` | 扩展至 7 个卡尔曼滤波器，含空中 ID 映射 |
+| `src/ekf/ekf/ekf_node.py` | 扩展至 14 个红蓝独立 EKF slot，含空中 ID 映射 |
 | `src/hnurm_radar/hnurm_radar/shared/display_panel.py` | 空中机器人显示标注 " UAV" 后缀 |
 
-### 未修改的文件
+### 当前限制
 
 | 文件 | 说明 |
 |---|---|
-| `judge_messager.py` | **暂不修改**——空中机器人坐标的通信规则尚未发布 |
+| `judge_messager.py` | `hnurm_air_launch.py` 已启动该节点，但发送映射仍只包含地面 1-5 与哨兵 7/107；空中 ID 6/106 暂不经 0x0305 发送 |
 
 ---
 
@@ -112,9 +111,9 @@ air_target_node 通过 tf2_ros 查询 TF
 
 ### 6.2 背景减除
 
-- 体素化背景模型，学习前 N 帧构建静态背景
-- `learn_z_max` 设为高度过滤下限，防止悬停的无人机被误学为背景
-- 只学习地面区域点（低于 `learn_z_max` 的点不会被标记为背景）
+- 默认 `source: "map"`：加载当前 `scenes.<name>.pcd_file` 点云地图，在 map 坐标系构建 KDTree
+- 每帧实时点云通过 TF 变换到 map 帧，点到地图最近邻距离小于 `bg_threshold` 视为背景
+- `source: "pcd"` 和 `source: "online"` 仍保留为旧模式，但比赛/常规调试优先使用 map 模式，避免赛前额外录制背景
 
 ### 6.3 DBSCAN 聚类
 
@@ -156,15 +155,16 @@ air_target:
     height_filter: { z_min: -1.5, z_max: -0.5 }
 
   clustering:
-    eps: 0.3                       # DBSCAN 邻域半径
+    eps: 0.15                      # DBSCAN 邻域半径
     min_samples: 5
     z_zip: 0.5                     # Z 轴压缩
 
   target_filter:
-    min_points: 5
-    max_points: 200
-    min_size: 0.1
-    max_size: 1.5
+    min_points: 500
+    max_points: 5000
+    min_size: 1.0
+    max_size: 3.5
+    confidence_threshold: 0.1
 
   tracking:
     enabled: true
@@ -174,7 +174,9 @@ air_target:
 
   background:
     enabled: true
-    voxel_size: 0.15
+    source: "map"
+    bg_threshold: 0.15
+    voxel_size: 0.10
     learning_frames: 10
 
   buffer:
@@ -186,22 +188,24 @@ air_target:
 
 ## 8. EKF 扩展
 
-`ekf_node.py` 从 6 → 7 个卡尔曼滤波器：
+`ekf_node.py` 当前维护 14 个 EKF slot：
 
-| 滤波器编号 | 原映射 | 新映射 |
+| slot 编号 | 映射 |
 |---|---|---|
-| 0~5 | 地面机器人 1~5, 7 | 不变 |
-| 6 | — | 空中机器人 (id=6 或 106) |
+| 0~4 | 红方地面 1~5 |
+| 5 | 红方哨兵 7 |
+| 6 | 红方空中 6 |
+| 7~11 | 蓝方地面 101~105 |
+| 12 | 蓝方哨兵 107 |
+| 13 | 蓝方空中 106 |
 
-ID 映射表 `transform_to_th`：
-- `6 → 6`（第 7 个滤波器）
-- `106 → 6`（第 7 个滤波器）
+ID 映射表 `transform_to_th` 使用 1-based slot 编号，红蓝方不再共用同一组数组下标。
 
 ---
 
 ## 9. 待办事项
 
-- [ ] 裁判系统空中机器人通信协议发布后，更新 `judge_messager.py`
+- [ ] 裁判系统空中机器人通信协议确认后，更新 `judge_messager.py` 的发送映射与帧格式
 
 ### 新增验证/调参工具
 

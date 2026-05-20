@@ -880,9 +880,9 @@ python3 scripts/test_yolo_3stage.py --image test_resources/pfa_test_image.jpg --
 | 模块 | 关注点 |
 |------|--------|
 | `RobotInfo` | 从位置差分计算速度 `v = Δpos / Δt` 和加速度 `a = Δv / Δt`（`calculateInfo()` 方法） |
-| `EKFNode.__init__()` | 6 个独立的 `RobotEKF` 实例（对应 1-5 号 + 7 号），噪声参数 `pval=0.001, qval=1e-4, rval=0.0005` |
+| `EKFNode.__init__()` | 14 个独立的 `RobotEKF` slot（红方 1-7 + 蓝方 101-107），噪声参数 `pval=0.001, qval=1e-4, rval=0.0005` |
 | `timer_callback()` | 50ms 定时器（20Hz）：更新 `locations_queue` → 计算速度/加速度 → `kalfilt[i].step()` → 发布 `ekf_location_filtered` |
-| `transform_to_th` | ID 映射：`{1:1, 2:2, ..., 7:6, 101:1, 102:2, ..., 107:6}`——红蓝方共用同一套数组下标（0-5） |
+| `transform_to_th` | ID 映射：红方地面 `1-5→1-5`、红哨兵 `7→6`、红空中 `6→7`、蓝方地面 `101-105→8-12`、蓝哨兵 `107→13`、蓝空中 `106→14` |
 | `location_callback()` | 订阅 `/location` 话题，更新 `self.recv_location` |
 
 **对比两套滤波器**：

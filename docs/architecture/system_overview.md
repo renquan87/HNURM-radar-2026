@@ -42,7 +42,7 @@ graph TD
     end
 
     subgraph 后处理层
-        EKF[ekf_node<br/>扩展卡尔曼滤波<br/>7路独立滤波器]
+        EKF[ekf_node<br/>扩展卡尔曼滤波<br/>14个红蓝独立slot]
     end
 
     subgraph 输出层
@@ -86,7 +86,7 @@ graph TD
     HAP[Livox HAP] --> LIVOX[livox_ros_driver2]
     LIVOX -->|/livox/lidar| LN[lidar_node]
     LN -->|/lidar_pcds| REG[registration_node]
-    LN -->|/target_pointcloud| AIR[air_target_node<br/>背景减除+DBSCAN+卡尔曼]
+    LN -->|/lidar_pcds| AIR[air_target_node<br/>map背景减除+DBSCAN+卡尔曼]
     REG -->|TF| AIR
     AIR -->|/location| EKF[ekf_node]
     EKF -->|/ekf_location_filtered| JM[judge_messager]
@@ -125,7 +125,7 @@ graph TD
 ### 空中方案：纯激光雷达
 
 ```
-点云 → 坐标变换(TF) → 背景减除 → ROI 裁剪(高度滤波)
+点云 → ROI 裁剪/降采样 → 坐标变换(TF) → map-KDTree 背景减除 → 高度过滤
   → DBSCAN 聚类 → 卡尔曼跟踪 → 敌我分类 → EKF → 裁判系统
 ```
 
@@ -202,12 +202,15 @@ graph LR
 ### EKF 滤波器架构
 
 ```
-滤波器 0~4 → 地面机器人 1-5 (ID 1-5 / 101-105)
-滤波器 5   → 哨兵 (ID 7 / 107)
-滤波器 6   → 空中机器人 (ID 6 / 106)
+slot 0~4   → 红方地面机器人 ID 1-5
+slot 5     → 红方哨兵 ID 7
+slot 6     → 红方空中机器人 ID 6
+slot 7~11  → 蓝方地面机器人 ID 101-105
+slot 12    → 蓝方哨兵 ID 107
+slot 13    → 蓝方空中机器人 ID 106
 ```
 
-每个滤波器独立运行，状态向量包含 (x, y, vx, vy)。
+每个 slot 独立运行，状态向量包含 (x, y, vx, vy)，避免红蓝同编号目标互相覆盖。
 
 ---
 
@@ -232,4 +235,3 @@ graph TD
 ```
 
 所有配置通过 `shared/paths.py` 统一管理路径解析，支持相对路径和场景切换。
-

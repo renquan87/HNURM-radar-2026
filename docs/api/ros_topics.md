@@ -18,14 +18,14 @@
 
 | 节点名 | 包 | 入口点 | 方案 | 说明 |
 |--------|-----|--------|------|------|
-| `lidar_listener` | `hnurm_radar` | `lidar_node` | 方案二/空中 | 激光雷达数据接收与预处理 |
+| `dynamic_cloud_node` | `hnurm_radar` | `lidar_node` | 方案二/空中 | 激光雷达数据接收与预处理 |
 | `detector` | `hnurm_radar` | `detector_node` | 方案二 | YOLO 三阶段目标检测 |
 | `radar` | `hnurm_radar` | `radar_node` | 方案二 | 点云-图像融合定位 |
 | `camera_detector` | `hnurm_radar` | `camera_detector` | 方案一 | 相机检测+透视变换定位 |
 | `air_target_node` | `hnurm_radar` | `air_target_node` | 空中 | 空中目标检测（背景减除+DBSCAN） |
 | `display_panel` | `hnurm_radar` | `display_panel` | 通用 | 小地图可视化面板 |
 | `judge_messager` | `hnurm_radar` | `judge_messager` | 通用 | 裁判系统串口通信 |
-| `ekf_node` | `ekf` | `ekf_node` | 通用 | 扩展卡尔曼滤波（7 路独立滤波器） |
+| `ekf_node` | `ekf` | `ekf_node` | 通用 | 扩展卡尔曼滤波（14 个红蓝独立 slot） |
 | `registration_node` | `registration` | — (C++) | 方案二/空中 | ICP 点云配准 |
 | `livox_driver` | `livox_ros_driver2` | — (C++) | 方案二/空中 | Livox HAP 激光雷达驱动 |
 
@@ -37,7 +37,7 @@
 
 | 话题名 | 消息类型 | 发布者 | 订阅者 | 说明 |
 |--------|---------|--------|--------|------|
-| `/livox/lidar` | `sensor_msgs/PointCloud2` | `livox_driver` | `lidar_listener` | Livox HAP 原始点云 |
+| `/livox/lidar` | `sensor_msgs/PointCloud2` | `livox_driver` | `dynamic_cloud_node` | Livox HAP 原始点云 |
 | `/image` | `sensor_msgs/Image` | `hnurm_camera_node` (外部) | `detector`, `radar` | 相机图像（方案二） |
 | `/camera_info` | `sensor_msgs/CameraInfo` | `camera_info_publisher` (外部) | `radar` | 相机内参 |
 
@@ -45,8 +45,8 @@
 
 | 话题名 | 消息类型 | 发布者 | 订阅者 | 说明 |
 |--------|---------|--------|--------|------|
-| `/lidar_pcds` | `sensor_msgs/PointCloud2` | `lidar_listener` | `registration_node` | 累积点云（用于 ICP 配准） |
-| `/target_pointcloud` | `sensor_msgs/PointCloud2` | `lidar_listener` | `radar`, `air_target_node` | 背景减除后的前景点云 |
+| `/lidar_pcds` | `sensor_msgs/PointCloud2` | `dynamic_cloud_node` | `registration_node`, `air_target_node` | 累积点云（用于 ICP 配准和空中方案） |
+| `/target_pointcloud` | `sensor_msgs/PointCloud2` | `dynamic_cloud_node` | `radar` | 背景减除后的前景点云（方案二融合定位） |
 | `/detect_result` | `detect_result/Robots` | `detector`, `camera_detector` | `radar` | 目标检测结果 |
 
 ### 输出话题
@@ -69,9 +69,9 @@
 
 | 话题名 | 消息类型 | 发布者 | 说明 |
 |--------|---------|--------|------|
+| `air_debug/air_points` | `sensor_msgs/PointCloud2` | `air_target_node` | 高度过滤后的空中候选点云 |
 | `air_debug/cluster_points` | `sensor_msgs/PointCloud2` | `air_target_node` | 聚类后的目标点云 |
 | `air_debug/cluster_markers` | `visualization_msgs/MarkerArray` | `air_target_node` | 聚类可视化标记 |
-| `air_debug/stats` | `std_msgs/String` | `air_target_node` | 检测统计信息（JSON） |
 
 ### 配准相关话题
 
@@ -128,7 +128,7 @@ Location[] locations    # 坐标列表
 单个 EKF slot 的诊断指标：
 
 ```
-int32 slot_id                    # EKF 滤波器编号 0-6
+int32 slot_id                    # EKF 滤波器编号 0-13
 int32 robot_id                   # 实际机器人 ID，未激活时为 0
 float32 detection_rate_hz        # 滑动窗口内的检测频率 (Hz)
 float32 time_since_last_det_ms   # 距上次检测的毫秒数
@@ -148,14 +148,14 @@ float32 cov_yy                   # P[2,2] Y 方向位置方差 (m²)
 
 ```
 builtin_interfaces/Time stamp    # 发布时间戳
-EkfDiagnostics[] slots           # 各 slot 诊断数据（最多 7 个）
+EkfDiagnostics[] slots           # 各 slot 诊断数据（最多 14 个）
 ```
 
 ---
 
 ## 节点详细说明
 
-### `lidar_listener` — 激光雷达预处理
+### `dynamic_cloud_node` — 激光雷达预处理
 
 - **源码**：`src/hnurm_radar/hnurm_radar/lidar_scheme/lidar_node.py`
 - **配置**：`configs/main_config.yaml` → `lidar` 段
@@ -163,7 +163,7 @@ EkfDiagnostics[] slots           # 各 slot 诊断数据（最多 7 个）
   1. 订阅 `/livox/lidar` 原始点云
   2. 距离滤波（近距离/远距离剔除）
   3. 多帧累积（PcdQueue，10 帧）→ 发布到 `/lidar_pcds`
-  4. 背景减除 → 发布前景到 `/target_pointcloud`
+  4. 基于静态地图 KDTree 提取动态点云 → 发布前景到 `/target_pointcloud`
 
 ### `detector` — YOLO 目标检测
 
@@ -185,13 +185,13 @@ EkfDiagnostics[] slots           # 各 slot 诊断数据（最多 7 个）
 
 - **源码**：`src/hnurm_radar/hnurm_radar/air_scheme/air_target_node.py`
 - **配置**：`configs/main_config.yaml` → `air_target` 段
-- **功能**：背景减除 → DBSCAN 聚类 → 卡尔曼跟踪
+- **功能**：订阅 `/lidar_pcds` → ROI/降采样 → map-KDTree 背景减除 → DBSCAN 聚类 → 卡尔曼跟踪
 
 ### `ekf_node` — 卡尔曼滤波
 
 - **源码**：`src/ekf/ekf/ekf_node.py`
 - **功能**：
-  1. 维护 7 个独立 EKF 滤波器（地面 1-5 + 哨兵 + 空中）
+  1. 维护 14 个独立 EKF slot（红方 1-7 + 蓝方 101-107，空中 ID 分别为 6/106）
   2. 订阅 `/location` → 滤波 → 发布 `/ekf_location_filtered`
   3. 发布 `/ekf_diagnostics`（`EkfDiagnosticsArray`）：新息、抖动、检测率、协方差等诊断指标
 
@@ -210,7 +210,7 @@ EkfDiagnostics[] slots           # 各 slot 诊断数据（最多 7 个）
 ```
 方案二（主力）数据流：
 
-/livox/lidar ──→ lidar_listener ──┬──→ /lidar_pcds ──→ registration_node ──→ TF(map→livox)
+/livox/lidar ──→ dynamic_cloud_node ──┬──→ /lidar_pcds ──→ registration_node ──→ TF(map→livox)
                                   │
                                   └──→ /target_pointcloud ──→ radar ──→ /location
                                                                 ↑
@@ -237,9 +237,9 @@ EkfDiagnostics[] slots           # 各 slot 诊断数据（最多 7 个）
 ```
 空中方案数据流：
 
-/livox/lidar ──→ lidar_listener ──┬──→ /lidar_pcds ──→ registration_node ──→ TF(map→livox)
+/livox/lidar ──→ dynamic_cloud_node ──┬──→ /lidar_pcds ──→ registration_node ──→ TF(map→livox)
                                  │
-                                 └──→ /target_pointcloud ──→ air_target_node ──→ /location
+                                 └──→ /lidar_pcds ──→ air_target_node ──→ /location
                                                                                      ↓
                                                              ekf_node ←── /location
                                                                 ├──→ /ekf_location_filtered

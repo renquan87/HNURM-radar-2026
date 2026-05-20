@@ -64,7 +64,7 @@
        ↓  缓存到 _latest_points
    air_target_node._process_callback()（定时器驱动，默认 10 Hz）
        ↓
-   [0] 背景预加载（可选，首次 TF 就绪时从 bg_pcd_file 加载）
+   [0] 背景预加载（默认 source="map"，加载当前场景点云地图；pcd/online 为旧模式兼容）
        ↓
    process_frame_pcd(pcd)
        ├── [1] AirPointCloudProcessor.crop_roi()      ROI 裁剪
@@ -415,13 +415,15 @@ AirKalmanFilter.set_global_params(...)
 # 2. 创建 Tracker
 self.tracker = AirTargetTracker(...)
 
-# 3. 背景减除：learn_z_min = height_filter.z_max（只学地面区域）
-learn_z_min = air_cfg.preprocessing.height_filter.z_max  # 如 -0.5
-self.bg_subtractor = AirBackgroundSubtractor(learn_z_min=learn_z_min)
+# 3. 背景减除：默认加载 map 坐标系点云地图，构建 KDTree
+self.bg_subtractor = AirBackgroundSubtractor(
+    bg_threshold=air_cfg.background.bg_threshold,
+    voxel_size=air_cfg.background.voxel_size,
+)
 
-# 4. 背景预加载（可选，配置了 bg_pcd_file 时自动触发）
-#    TF 就绪后：读取 PCD → 逆变换到 livox 帧 → load_from_pcd()
-#    跳过在线学习，第 1 帧就能检测
+# 4. 背景预加载（可选）
+#    source="map"：直接加载 scenes.<name>.pcd_file，TF 就绪后即可开始检测
+#    source="pcd" / "online"：旧模式，仅在兼容或特殊调试时启用
 ```
 
 #### `process_frame_pcd(pcd)` 接口
@@ -438,8 +440,9 @@ locations, stats = node.process_frame_pcd(pcd_o3d)
 ```
 使用 TF2 查询 livox → map 的变换（由已有 registration 节点提供）。
 每秒尝试刷新一次；TF 就绪后：
-  1. 若配置了 bg_pcd_file，立即加载预建背景（PCD 逆变换到 livox 帧）
-  2. 开始正常检测流程
+  1. 如果背景模式是 `map`，直接加载当前场景点云地图
+  2. 如果背景模式是 `pcd`，再逆变换到 livox 帧加载旧背景
+  3. 之后开始正常检测流程
 ```
 
 #### 敌我区分
@@ -586,14 +589,15 @@ loose_query:
 ```yaml
 background:
   enabled: true
-  voxel_size: 0.15              # 背景体素大小（m）
-  occupy_threshold: 5           # 命中5次以上视为静态背景
-  learning_frames: 10           # 前10帧用于建立背景模型
-  bg_pcd_file: "data/lab_pcds.pcd"  # 预建PCD地图路径（空=""则用在线学习）
+  source: "map"                 # 推荐：直接使用场景点云地图
+  bg_threshold: 0.15            # map 模式最近邻距离阈值
+  voxel_size: 0.10              # 背景地图降采样体素大小（m）
+  occupy_threshold: 5           # 旧模式：命中5次以上视为静态背景
+  learning_frames: 10           # 旧模式：前10帧用于建立背景模型
+  bg_pcd_file: ""               # 旧模式：预建PCD地图路径
 ```
 
-> 💡 **预加载 vs 在线学习**：设置 `bg_pcd_file` 后，节点启动时会从 PCD 加载背景，第 1 帧就能检测，
-> 无需等待学习帧，且启动时视野内可以有无人机。设为空字符串则回退到原始在线学习模式。
+> 💡 **推荐方式**：`source: "map"`，直接使用场景点云地图做背景。`bg_pcd_file` 和 `online` 仍可用，但只作为旧模式兼容。
 
 ---
 
@@ -641,7 +645,7 @@ field_split_x: 14.0   # 赛场 X 轴中线（28m / 2）
 
 ```bash
 # 使用 launch 文件
-ros2 launch src/hnurm_bringup/launch/hnurm_air_launch.py
+ros2 launch hnurm_bringup hnurm_air_launch.py
 
 # 或手动启动
 source install/setup.bash
@@ -692,11 +696,11 @@ ros2 topic hz /location            # 确认发布频率
 ### 7.4 背景建模注意事项
 
 ```
-✅ 推荐方式：使用预建PCD加载背景（bg_pcd_file）
-   在 main_config.yaml 中设置 bg_pcd_file 指向预建点云地图（如 data/lab_pcds.pcd），
-   节点启动后 TF 就绪即自动加载，第 1 帧就能检测，无任何限制。
+✅ 推荐方式：使用场景点云地图（source: "map"）
+   在 main_config.yaml 中保留当前场景的 `scenes.<name>.pcd_file`，
+   节点启动后 TF 就绪即自动加载，第 1 帧就能检测。
 
-⚠️ 回退方式：在线学习（bg_pcd_file 为空时）
+⚠️ 旧模式：预建 PCD 或在线学习（source: "pcd" / "online"）
    节点启动后前 learning_frames=10 帧（约 1 秒）用于背景建模。
    在此期间请确保：
    1. 激光雷达视野内没有无人机
@@ -813,7 +817,7 @@ python3 scripts/validate_air_tracking_sequence.py \
 按概率排序，逐项检查：
 
 1. **卡尔曼初始协方差设置**：确认 `init_p_times: 20` 而非极小值
-2. **背景减除方向**：确认代码中 `learn_z_min = height_filter.z_max`（非 `z_min`）
+2. **背景减除模式**：确认 `background.source: "map"` 已加载当前场景点云地图；旧模式再检查学习区间
 3. **确认窗口**：确认 `confirm_frames: 2`
 4. **TF 变换稳定性**：`ros2 run tf2_ros tf2_echo map livox`，观察输出是否连续抖动
 5. **高度过滤是否覆盖到地面点**：用可视化脚本检查 `--show-raw` 后肉眼确认
@@ -824,7 +828,7 @@ python3 scripts/validate_air_tracking_sequence.py \
 2. 检查 `height_filter.z_min/z_max` 是否覆盖了无人机实际飞行高度
 3. 降低 `min_points`（试设为 3）
 4. 增大 `eps`（试设为 0.4~0.5）
-5. 检查背景减除是否正常：若用在线学习模式，启动时无人机是否还在场地内（推荐改用 `bg_pcd_file` 预加载）
+5. 检查背景减除是否正常：优先确认 `source: "map"` 已正确加载当前场景点云地图
 
 ### Q3：误检太多
 
@@ -832,7 +836,7 @@ python3 scripts/validate_air_tracking_sequence.py \
 2. 缩小 `max_size`（1.5 → 1.0）
 3. 提高 `confidence_threshold`（0.15 → 0.3）
 4. 提高 `confirm_frames`（2 → 3 或 4）
-5. 确认背景减除在正常运行（推荐使用 `bg_pcd_file` 预加载，或确保在线学习时视野内无运动物体）
+5. 确认背景减除在正常运行；若仍使用在线学习，启动时视野内不能有大幅运动物体
 
 ### Q4：实验室有多台无人机，如何同时显示
 
@@ -904,7 +908,7 @@ python scripts/validate_air_tracking_sequence.py --pcd_dir /path/to/frames/
 
 | # | Bug 描述 | 影响 | 修复方式 |
 |---|---------|------|---------|
-| 1 | `AirBackgroundSubtractor` 用 `learn_z_max=z_min`，把无人机悬停位置学为背景 | 悬停无人机被过滤，产生漂移 | 改为 `learn_z_min=z_max`，只学地面区域 |
+| 1 | `AirBackgroundSubtractor` 把无人机悬停位置学为背景 | 悬停无人机被过滤，产生漂移 | 改为 map 背景模式，或至少只在无人机不在场时进行旧式背景学习 |
 | 2 | `AirKalmanFilter` 初始协方差 `P₀≈0`，马氏距离计算异常 | 每帧建新目标，ID 跳变，坐标漂移 | `P₀ = Q × init_p_times`（×20）|
 | 3 | `tracker.update()` 无确认窗口，单帧噪声立即发布 | 噪声点随机出现在小地图上 | 增加 `confirm_frames=2` |
 | 4 | `tracker.update()` 不接受 `pcd` 和 `detector` 参数 | 松弛查询/分裂功能无法调用 | 接口扩展为 `update(detections, pcd, detector)` |
@@ -935,9 +939,9 @@ python scripts/validate_air_tracking_sequence.py --pcd_dir /path/to/frames/
 
 | 对比项 | HITS | 本项目 | 说明 |
 |--------|------|--------|------|
-| **背景模型** | 3D STL Mesh（赛场模型） + 射线投射 | 运行时体素网格自动学习 | HITS 用已知赛场模型做射线-体素遮挡过滤，离线构建；本项目在线学习背景 |
-| **背景判定** | `is_occupied()` 布尔网格，被 mesh 遮挡的体素视为背景 | 体素命中计数 ≥ `occupy_threshold` 视为背景 | HITS 是几何遮挡；本项目是统计频率 |
-| **VoxelGrid 分区** | 不分区，所有点统一过滤 | 按 `learn_z_min` 分区：空中区域全保留，地面区域过滤 | 本项目针对空中目标特化 |
+| **背景模型** | 3D STL Mesh（赛场模型） + 射线投射 | 场景点云地图 + cKDTree 最近邻；旧体素学习兼容 | HITS 用已知赛场模型做射线-体素遮挡过滤；本项目复用 registration 点云地图 |
+| **背景判定** | `is_occupied()` 布尔网格，被 mesh 遮挡的体素视为背景 | 实时点变换到 map 帧后，点到地图最近距离 < `bg_threshold` 视为背景 | 两者都是静态环境过滤，本项目依赖 TF 精度 |
+| **VoxelGrid 分区** | 不分区，所有点统一过滤 | 旧模式按 `learn_z_min` 分区；map 模式不依赖该分区 | 旧模式为兼容路径 |
 | **ROI 裁剪** | VoxelGrid 范围隐式裁剪（超出范围视为被占据） | 显式 NumPy 布尔索引裁剪（ROI x/y/z 范围） | 效果等价 |
 | **体素降采样** | 收到点云后直接处理（C++ 层面快） | Open3D `voxel_down_sample(0.05)` | HITS 无显式降采样，靠 VoxelFilter 限频率 |
 | **高度过滤** | 无高度过滤（地面机器人无需） | Z 轴区间过滤 `[z_min, z_max]` + 自适应 | 本项目特有：只保留飞行高度范围的点 |
@@ -1043,8 +1047,8 @@ HITS 面向地面机器人（速度 ≤5m/s，观测频率高，点云密度大�
 | **自适应高度过滤** | 根据已跟踪目标高度动态收缩 z 过滤范围 |
 | **目标置信度** | 基于点数和尺寸合理性计算 0~1 置信度并排序 |
 | **主成分分裂** | 投影间隙分析分裂疑似合并的大簇 |
-| **背景双模式** | 支持预建PCD加载（即时就绪）和在线学习（无需赛场 STL 模型）双模式 |
-| **分区背景过滤** | 空中区域点直接保留，只过滤地面区域背景 |
+| **背景三模式** | 默认 `map` 模式复用场景点云地图；`pcd`/`online` 为旧模式兼容 |
+| **map-KDTree 背景过滤** | 实时点云变换到 map 帧，与静态地图做最近邻背景判定 |
 | **EKF 下游** | 检测结果经 `ekf_node` 二次平滑后输出 |
 | **离线调试工具** | PCD 快照保存、参数网格搜索、跟踪验证脚本 |
 | **RViz 实时调试** | 包围盒 + 文本标注 + 聚类着色点云 |
@@ -1149,8 +1153,8 @@ HITS 面向地面机器人（速度 ≤5m/s，观测频率高，点云密度大�
 
 | 误识别来源 | 为何通过了现有过滤 | 严重程度 |
 |---|---|---|
-| 背景建模不完整 | 在线学习只学地面区域（z >= z_max），空中高度的静态结构从未被学为背景 | ⭐⭐⭐⭐⭐ |
-| 预加载PCD背景范围不足 | 预建PCD覆盖了全部高度，但体素大小0.15m可能遗漏细小结构 | ⭐⭐⭐ |
+| 场景点云地图不完整或过期 | map 背景没有覆盖天花板横梁、线缆等静态结构，最近邻距离超过阈值 | ⭐⭐⭐⭐⭐ |
+| 背景阈值/体素过粗 | `bg_threshold` 太小或 `voxel_size` 太大，细小静态结构被误认为前景 | ⭐⭐⭐ |
 | DBSCAN 参数宽松 | eps=0.3, min_samples=5，远距离5个噪声点就能成簇 | ⭐⭐⭐ |
 | 置信度阈值太低 | confidence_threshold=0.15，6个点也能通过 | ⭐⭐ |
 | 无形状/运动学验证 | 只看点数和尺寸，不看形状、运动特征、反射率 | ⭐⭐⭐⭐（根本原因）|
@@ -1241,32 +1245,29 @@ print(f'Z mean: {pts[:,2].mean():.3f}')
 
 **解答**：
 
-**当前代码已经支持这个功能！** 关键配置是 `bg_pcd_file`。
+**当前代码已经支持这个功能！** 关键配置是 `background.source: "map"`。
 
 **工作原理**：
 ```
-background_subtractor.py 的 load_from_pcd() 方法：
-  1. 读取预建 PCD 文件（如 data/lab_pcds.pcd）
-  2. 默认 use_all_points=True → 不受 learn_z_min 限制
-  3. PCD 中所有高度的点全部作为背景（因 PCD 是纯静态场景）
-  4. 每个体素直接设为 occupy_threshold（确认为背景）
-  5. is_ready = True → 后续 learn() 被跳过
-
-  也就是说：PCD 文件中包含的所有点（地面+空中静态结构）都会被设为背景。
-  横梁、灯架、墙壁，只要在 PCD 采集时被扫到，就会成为背景。
+background_subtractor.py 的 load_from_map() 方法：
+  1. 读取场景点云地图
+  2. 可选做 ROI 裁剪与 voxel_down_sample
+  3. 构建 cKDTree 作为背景索引
+  4. 实时点云变换到 map 帧后做最近邻查询
+  5. 距离小于 bg_threshold 的点判定为背景
 ```
 
 **你需要确保的是**：
-1. PCD 文件是在 **无人机不在场** 时采集的（否则无人机也被学进背景）
-2. PCD 文件覆盖了实验室/赛场的 **完整静态结构**（含空中横梁等）
-3. 配置路径正确：
+1. 场景点云地图覆盖了实验室/赛场的 **完整静态结构**
+2. 如果仍在使用 `bg_pcd_file`，必须确保采集时 **无人机不在场**
+3. 旧路径配置正确：
 
 ```yaml
 # configs/main_config.yaml
 air_target:
   background:
-    bg_pcd_file: "data/lab_pcds.pcd"    # 实验室
-    # bg_pcd_file: "data/pcds.pcd"       # 比赛时改为赛场 PCD
+    source: "map"                       # 推荐
+    # bg_pcd_file: "data/lab_pcds.pcd"  # 旧模式兼容
 ```
 
 **如果仍有遗漏结构怎么办**：
@@ -1278,8 +1279,8 @@ air_target:
 ```
 1. 到达赛场后，用激光雷达采集赛场完整点云 → 保存为 data/pcds.pcd
 2. 确保采集时没有机器人在场（或至少空中没有无人机）
-3. 修改 bg_pcd_file 路径指向赛场 PCD
-4. 启动系统 → 第 1 帧就能用完整背景过滤
+3. 如果使用旧模式，再把 bg_pcd_file 指向赛场 PCD
+4. 启动系统 → 第 1 帧即可加载 map 背景并开始检测
 ```
 
 
@@ -2641,9 +2642,10 @@ roi:
 
 # --- 背景减除 ---
 background:
-  voxel_size: 0.1         # 背景体素大小(m)，越小越精细但内存越大
-  bg_pcd_file: "data/lab_pcds.pcd"  # 背景PCD文件路径
-  # ⚠ 比赛时需更换为比赛场地PCD
+  source: "map"           # 推荐：直接使用场景地图
+  bg_threshold: 0.15
+  voxel_size: 0.1
+  # bg_pcd_file: "data/lab_pcds.pcd"  # 旧模式兼容
 
 # --- 高度过滤 ---
 height_filter:

@@ -21,13 +21,9 @@ from global_variables import *
 
 这个模块在整个项目中不存在。这个文件要么是死代码（从未被调用），要么一运行就 `ImportError` 崩溃。如果是死代码，应该删除；如果是活代码，这是严重 bug。
 
-### 2. [`lidar_node.py:71`](../../src/hnurm_radar/hnurm_radar/lidar_scheme/lidar_node.py:71) — 硬编码绝对路径
+### 2. [`lidar_node.py:71`](../../src/hnurm_radar/hnurm_radar/lidar_scheme/lidar_node.py:71) — 已修复：背景地图路径不再硬编码
 
-```python
-"/home/syh/rm_lidar_2027/HNURM-radar-2026/data/pointclouds/background/RM2025.pcd"
-```
-
-写死了另一位开发者的家目录路径。换一台机器、换一个用户直接崩溃。项目里已经有 [`shared/paths.py`](../../src/hnurm_radar/hnurm_radar/shared/paths.py) 路径管理模块，却没有被使用。
+`lidar_node.py` 现在通过 [`shared/paths.py`](../../src/hnurm_radar/hnurm_radar/shared/paths.py) 的 `resolve_path()` 解析 `configs/main_config.yaml` 里的 `lidar.background_map_path`，这个问题已经从“硬编码绝对路径”修成了“可配置路径”。
 
 ### 3. [`radar.py:350-352`](../../src/hnurm_radar/hnurm_radar/lidar_scheme/radar.py:350-352) — 开发者自己都困惑的代码
 

@@ -71,3 +71,4 @@ docs/_build/
 docs/*.pdf
 docs/archive/
 docs/tmp/
+AGENTS.md

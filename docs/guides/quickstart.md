@@ -186,7 +186,7 @@ ros2 launch registration registration.launch.py
 # ⚠ 在 RViz 中点击 "2D Pose Estimate"
 ```
 
-`hnurm_air_launch.py` 启动的 4 个节点：`lidar_node`、`air_target_node`、`display_panel`、`ekf_node`
+`hnurm_air_launch.py` 启动的 5 个节点：`lidar_node`、`air_target_node`、`display_panel`、`ekf_node`、`judge_messager`
 
 空中方案配置在 `configs/main_config.yaml` 的 `air_target:` 段，详见 [空中方案指南](AIR_SCHEME_GUIDE.md)。
 
@@ -257,9 +257,9 @@ ros2 launch foxglove_bridge foxglove_bridge_launch.xml
 - 3D 点云面板（lidar_pcds / target_pointcloud / global_pcd_map / 空中聚类等）
 - 检测画面面板（/detect_view）
 - 小地图面板（/map_view — 需运行 `display_panel` 节点）
-- EKF 滤波坐标时序图（X / Y 分离，7 个滤波器全覆盖）
+- EKF 滤波坐标时序图（X / Y 分离，14 个红蓝 slot 全覆盖）
 - 原始检测坐标时序图（/location 未滤波数据）
-- 原始消息查看器（/location / /ekf_location_filtered / /detect_result / air_debug/stats）
+- 原始消息查看器（/location / /ekf_location_filtered / /detect_result / air_debug/air_points / air_debug/cluster_points）
 
 导入方法：Foxglove Studio → 左上角菜单 → **Import layout from file** → 选择 `configs/foxglove_layout.json`
 

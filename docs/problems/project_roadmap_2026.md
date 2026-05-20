@@ -20,12 +20,12 @@ Scheme2融合方案是当前最可运行的方案。目标方向：地面纯相�
 | Scheme2 融合 | 海康+Livox HAP | YOLO+点云投影聚类 | 最可运行，但有严重bug |
 | Scheme3 空中 | Livox HAP | 背景减除+DBSCAN+Kalman | 基本可用，缺裁判系统对接 |
 
-### 1.2 已发现的严重bug（4个，影响比赛结果级别）
+### 1.2 Phase 0 严重 bug 状态（4个，影响比赛结果级别）
 
-1. **友方/敌方坐标未分流**（`radar.py:316`）— 所有检测结果（含己方）都通过0x0305敌方标记通道发送。己方坐标应走单独的上报通道（2026规则要求上报双方坐标）
-2. **硬编码绝对路径**（`lidar_node.py:72`）— 写死了syh的机器路径`/home/syh/...`，换机器必崩
-3. **TF失败回退矩阵错误**（`radar.py:182`）— 用`np.ones((4,4))`而非`np.eye(4)`，产生垃圾坐标
-4. **空中launch缺节点**（`hnurm_air_launch.py`）— 未包含`judge_messager`，空中检测结果无法上报裁判系统
+1. **友方/敌方坐标未分流**（`radar.py`/`judge_messager.py`）— 已修复发送侧误报：`judge_messager` 会按 `label == my_color` 过滤友方；但 2026 要求的己方坐标上报通道仍未实现
+2. **硬编码绝对路径**（`lidar_node.py`）— 已修复：背景地图路径从 `configs/main_config.yaml` 的 `lidar.background_map_path` 读取，并通过 `resolve_path()` 解析
+3. **TF失败回退矩阵错误**（`radar.py`）— 已修复：当前默认变换矩阵初始化为 `np.eye(4)`，不再使用 `np.ones((4,4))`
+4. **空中 launch 缺节点**（`hnurm_air_launch.py`）— 已修复：现在包含 `judge_messager`；但裁判系统发送映射仍只处理地面机器人和哨兵，空中 ID 6/106 还未接入
 
 ### 1.3 Git分支问题
 
@@ -79,7 +79,7 @@ Scheme2融合方案是当前最可运行的方案。目标方向：地面纯相�
 | 2 | `radar.py` | TF失败回退改为`np.eye(4)` |
 | 3 | `radar.py` | 修复双重齐次化问题、去除重复日志 |
 | 4 | `lidar_node.py` | 硬编码路径改为使用`paths.py`的`resolve_path`从config读取 |
-| 5 | `hnurm_air_launch.py` | 添加`judge_messager`节点 |
+| 5 | `hnurm_air_launch.py` | 已完成：包含 `judge_messager`；后续仅需补空中通信映射 |
 
 **验证**：rosbag回放Scheme2全流程无崩溃；EKF输出坐标在赛场范围28m×15m内。
 
@@ -149,7 +149,7 @@ qnl和syh各自创建了`hungarian_tracker.py`、`bbox_kalman.py`、`guess_pts.p
 
 #### 3.2 空中方案完善
 
-- 完善hnurm_air_launch.py（加入judge_messager）
+- 完善 `judge_messager.py` 的空中机器人通信映射
 - 背景减除鲁棒性优化（多环境测试）
 - 接入裁判系统上报空中机器人坐标
 

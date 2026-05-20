@@ -745,9 +745,9 @@ background:
 
 **现有实现**（`ekf_node.py`）：
 
-- 维护 7 个独立 EKF 滤波器：`robot_1` ~ `robot_5`（地面）、`sentry`（哨兵）、`air`（空中）
-- 状态向量：`[x, y, z, vx, vy, vz]`（位置 + 速度）
-- 观测输入：来自检测节点的 `/location` 话题（`Float32MultiArray`）
+- 维护 14 个独立 EKF slot：红方 1-7 与蓝方 101-107 分开管理，空中 ID 分别为 6/106
+- 状态向量：`[x, vx, y, vy]`
+- 观测输入：来自检测节点的 `/location` 话题（`detect_result/Locations`）
 - 输出：`/ekf_location_filtered` 话题
 - 更新频率：由 `timer_callback` 控制
 
@@ -759,7 +759,7 @@ background:
 | 无数据关联 | 检测 ID 跳变时 EKF 无法正确关联目标 |
 | 无遮挡处理 | 目标被遮挡时 EKF 无观测输入，状态快速发散 |
 | 无运动模型切换 | 匀速模型对加速/转弯场景适应性差 |
-| 独立滤波 | 7 个滤波器互不通信，无法利用全局约束 |
+| 独立滤波 | 14 个 slot 互不通信，无法利用全局约束 |
 
 #### 4.3.2 改进方案
 
